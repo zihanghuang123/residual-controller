@@ -65,7 +65,7 @@ def rollout(mjx_model,
         u_ref_window = jnp.concatenate([u_ref_hist, u_ref[None]], axis=0)
 
         v = controller_fn(x_hist_full, u_hist, x_ref_window, u_ref_window)
-        pd = kp * (x_ref[:nq] - d.qpos) - kd * d.qvel
+        pd = kp * (x_ref[:nq] - d.qpos) + kd * (x_ref[nq:] - d.qvel)
         u = u_ref + pd + v
 
         d = d.replace(ctrl=u)
@@ -79,5 +79,7 @@ def rollout(mjx_model,
         return (d, new_x_hist, new_u_hist, new_x_ref_hist, new_u_ref_hist), (x_curr, u, v)
 
     init_carry = (d0, x_hist0, u_hist0, x_ref_hist0, u_ref_hist0)
-    _, (states, controls, residuals) = jax.lax.scan(step, init_carry, jnp.arange(n_steps))
-    return states, controls, residuals
+    final_carry, (states, controls, residuals) = jax.lax.scan(step, init_carry, jnp.arange(n_steps))
+    final_d = final_carry[0]
+    x_final = jnp.concatenate([final_d.qpos, final_d.qvel])
+    return states, controls, residuals, x_final

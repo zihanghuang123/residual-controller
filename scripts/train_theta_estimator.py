@@ -91,7 +91,7 @@ def make_loss_fn(mjx_model_nominal, nominal_body_mass, network, x_refs, u_refs):
         def zero_controller(*_):
             return jnp.zeros(cfg.NU)
 
-        xs, us, _vs = rollout.rollout(
+        xs, us, _vs, _x_final = rollout.rollout(
             mjx_model, x_init, x_ref_window, u_ref_window,
             x_hist0, u_hist0, x_ref_hist0, u_ref_hist0,
             zero_controller, kp, kd, n_rollout,

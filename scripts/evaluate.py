@@ -73,8 +73,9 @@ def make_eval_fn(mjx_model_nominal, nominal_body_mass, controller_fn, x_refs, u_
         theta = sample_theta(theta_key, cfg.N_LINKS, cfg.DR_RANGES)
         mjx_model = apply_theta(mjx_model_nominal, theta, nominal_body_mass, cfg.N_LINKS)
 
-        x_ref_full = x_refs[idx, :T]              # (T, nx) — references aligned with rollout steps
+        x_ref_full = x_refs[idx, :T]              # (T, nx) — used inside the rollout
         u_ref_full = u_refs[idx]                  # (T, nu)
+        x_ref_for_loss = x_refs[idx]              # (T+1, nx) — full reference for tracking
         x_target = x_refs[idx, -1]                # (nx,) — TO final state = target
 
         x_init = x_ref_full[0]
@@ -82,14 +83,15 @@ def make_eval_fn(mjx_model_nominal, nominal_body_mass, controller_fn, x_refs, u_
             x_ref_full[0], u_ref_full[0], w
         )
 
-        xs, _us, _vs = rollout.rollout(
+        xs, _us, _vs, x_final = rollout.rollout(
             mjx_model, x_init, x_ref_full, u_ref_full,
             x_hist0, u_hist0, x_ref_hist0, u_ref_hist0,
             controller_fn, kp, kd, T,
         )
+        xs_full = jnp.concatenate([xs, x_final[None]], axis=0)
 
-        endpoint = losses.endpoint_error(xs[-1], x_target, nq)
-        tracking = losses.tracking_loss(xs, x_ref_full, nq)
+        endpoint = losses.endpoint_error(x_final, x_target, nq)
+        tracking = losses.tracking_loss(xs_full, x_ref_for_loss, nq)
         return endpoint, tracking
 
     return eval_fn

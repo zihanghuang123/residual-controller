@@ -38,10 +38,10 @@ The estimator's input is **history only** — `(x_hist, u_hist)`. References car
 
 Trajectories from `solve_trajectory.py` have horizon `T = SIM_DURATION / TIMESTEP` steps (1000 for the double pendulum at 2 s, 2 ms). Backpropagating through all `T` MJX steps per iteration is impractical: memory grows linearly with `T`, and gradient norms can explode through long unrolls of stiff dynamics.
 
-Instead, each training iteration samples a random window of length `n_rollout = H` (= 100) from a random TO trajectory and a random start index `t0`. The rollout starts at the reference state `x_refs[idx, t0]`, runs for `H` MJX steps under the closed-loop law, and the loss is computed over that window:
+Instead, each training iteration samples a random window of length `n_rollout = H` (= 100) from a random TO trajectory and a random start index `t0`. The rollout starts at the reference state `x_refs[idx, t0]`, runs for `H` MJX steps under the closed-loop law, and the loss is computed over the resulting `H+1` states (the `H` rolled-out states plus the post-step terminal state):
 
 ```
-tracking_loss(xs, x_refs[idx, t0:t0+H], nq) + alpha_reg * reg_loss(vs)
+tracking_loss(xs_full, x_refs[idx, t0:t0+H+1], nq) + alpha_reg * reg_loss(vs)
 ```
 
 Each iteration sees a different combination of (trajectory, start time, plant) so over many iterations the controller is exposed to every segment of the swing-up under a wide distribution of plants. The history buffers (`x_hist0`, `u_hist0`, ...) are initialized by padding with `x_refs[idx, t0]` — a simplification that matches what deployment will see in its first few steps.

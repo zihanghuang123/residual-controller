@@ -96,6 +96,7 @@ def make_loss_fn(mjx_model_nominal, nominal_body_mass,
 
         x_ref_window = jax.lax.dynamic_slice(x_refs[idx], (t0, 0), (H, 2 * nq))
         u_ref_window = jax.lax.dynamic_slice(u_refs[idx], (t0, 0), (H, cfg.NU))
+        x_ref_for_loss = jax.lax.dynamic_slice(x_refs[idx], (t0, 0), (H + 1, 2 * nq))
 
         x_init = x_ref_window[0]
         x_hist0, u_hist0, x_ref_hist0, u_ref_hist0 = make_history_buffers(
@@ -113,13 +114,14 @@ def make_loss_fn(mjx_model_nominal, nominal_body_mass,
             )
             return controller_network.apply(controller_params, controller_input)
 
-        xs, _us, vs = rollout.rollout(
+        xs, _us, vs, x_final = rollout.rollout(
             mjx_model, x_init, x_ref_window, u_ref_window,
             x_hist0, u_hist0, x_ref_hist0, u_ref_hist0,
             controller_fn, kp, kd, H,
         )
+        xs_full = jnp.concatenate([xs, x_final[None]], axis=0)
 
-        return losses.tracking_loss(xs, x_ref_window, nq) + cfg.CONTROLLER["alpha_reg"] * losses.reg_loss(vs)
+        return losses.tracking_loss(xs_full, x_ref_for_loss, nq) + cfg.CONTROLLER["alpha_reg"] * losses.reg_loss(vs)
 
     return loss_fn
 
