@@ -95,6 +95,47 @@ CONTROLLER = {
 }
 
 
+# Pure RNN residual
+# Per-step input:  (x_t, u_{t-1}, x_ref_t, u_ref_t)
+# Output:          v in R^NU
+PURE_RNN = {
+    "hidden_sizes": (128, 128),  
+    "n_rollout": 300,             
+    "batch_size": 64,
+    "lr": 3e-4,
+    "n_iterations": 3000,
+    "grad_clip_norm": 1.0,
+    "alpha_reg": 1e-5,
+}
+
+
+# Theta estimator (streaming RNN)
+# Per-step input:  (x_t, u_{t-1})
+# Output:          theta_estimate in R^THETA_DIM
+THETA_RNN = {
+    "hidden_sizes": (128, 128),  
+    "n_rollout": 600,     
+    "batch_size": 64,
+    "lr": 3e-4,
+    "n_iterations": 6000,
+    "grad_clip_norm": 1.0,
+}
+
+
+# Controller RNN with frozen theta estimator
+# Per-step input:  (x_t, u_{t-1}, x_ref_t, u_ref_t, theta_hat)
+# Output:          v in R^NU
+CONTROLLER_RNN = {
+    "hidden_sizes": (128, 128),  
+    "n_rollout": 300,         
+    "batch_size": 64,
+    "lr": 3e-4,
+    "n_iterations": 3000,
+    "grad_clip_norm": 1.0,
+    "alpha_reg": 1e-5,
+}
+
+
 # Evaluation
 N_EVAL_PLANTS = 1000
 EVAL_SEED = 42

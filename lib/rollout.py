@@ -1,10 +1,13 @@
 """MJX rollout helpers.
 
-One unified `rollout` function steps physics under a closed-loop control law
-    u(t) = u*(t) + PD(x*(t) - x(t)) + controller_fn(x_hist_full, u_hist, x_ref_window, u_ref_window)
-while maintaining sliding history windows of length w for both simulated and reference data.
+Two closed-loop rollouts under the law  u(t) = u*(t) + PD(x*(t) - x(t)) + v(t).
+They differ in how v(t) is sourced:
 
-For PD-only rollouts, pass `lambda *_: jnp.zeros((nu,))`.
+- `rollout()`     — MLP-style. Maintains sliding history windows of length w and feeds them to a stateless controller_fn each step
+
+- `rollout_rnn()` — RNN-style. Threads an opaque hidden state `h` through the scan; `h` is the history, no explicit window.
+
+For PD-only rollouts, the controller_fn returns zero v (and, in the RNN form, leaves `h` unchanged).
 """
 
 from typing import Callable, Optional
@@ -79,6 +82,58 @@ def rollout(mjx_model,
         return (d, new_x_hist, new_u_hist, new_x_ref_hist, new_u_ref_hist), (x_curr, u, v)
 
     init_carry = (d0, x_hist0, u_hist0, x_ref_hist0, u_ref_hist0)
+    final_carry, (states, controls, residuals) = jax.lax.scan(step, init_carry, jnp.arange(n_steps))
+    final_d = final_carry[0]
+    x_final = jnp.concatenate([final_d.qpos, final_d.qvel])
+    return states, controls, residuals, x_final
+
+
+def make_rnn_step_input(x_curr: jnp.ndarray,
+                        u_prev: jnp.ndarray,
+                        x_ref: Optional[jnp.ndarray] = None,
+                        u_ref: Optional[jnp.ndarray] = None,
+                        theta_estimate: Optional[jnp.ndarray] = None) -> jnp.ndarray:
+    """Per-step feature vector for an RNN."""
+    parts = [x_curr, u_prev]
+    if x_ref is not None:
+        parts.append(x_ref)
+    if u_ref is not None:
+        parts.append(u_ref)
+    if theta_estimate is not None:
+        parts.append(theta_estimate)
+    return jnp.concatenate(parts)
+
+
+def rollout_rnn(mjx_model,
+                x_init: jnp.ndarray,
+                x_refs: jnp.ndarray,
+                u_refs: jnp.ndarray,
+                h0,
+                controller_fn: Callable,
+                kp: jnp.ndarray,
+                kd: jnp.ndarray,
+                n_steps: int):
+    """Roll out closed-loop control under MJX, RNN-style."""
+    nq = mjx_model.nq
+    nu = mjx_model.nu
+    d0 = make_initial_data(mjx_model, x_init[:nq], x_init[nq:])
+    u_prev0 = jnp.zeros(nu)
+
+    def step(carry, t):
+        d, h, u_prev = carry
+        x_curr = jnp.concatenate([d.qpos, d.qvel])
+        x_ref = x_refs[t]
+        u_ref = u_refs[t]
+
+        new_h, v = controller_fn(h, x_curr, u_prev, x_ref, u_ref)
+        pd = kp * (x_ref[:nq] - d.qpos) + kd * (x_ref[nq:] - d.qvel)
+        u = u_ref + pd + v
+
+        d = d.replace(ctrl=u)
+        d = mjx.step(mjx_model, d)
+        return (d, new_h, u), (x_curr, u, v)
+
+    init_carry = (d0, h0, u_prev0)
     final_carry, (states, controls, residuals) = jax.lax.scan(step, init_carry, jnp.arange(n_steps))
     final_d = final_carry[0]
     x_final = jnp.concatenate([final_d.qpos, final_d.qvel])
