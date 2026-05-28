@@ -1,0 +1,21 @@
+# Conda env for the residual-controller pipeline (Linux / WSL2 + NVIDIA GPU).
+#
+#   conda env create -f environment.yml
+#   conda activate residual-controller
+
+name: residual-controller
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - crocoddyl # trajectory optimization; pulls in pinocchio
+  - pinocchio # listed explicitly to pin it as a direct dep
+  - numpy
+  - matplotlib # plot.py
+  - pip
+  - pip:
+      - "jax[cuda12]" # CUDA 12 wheels; requires a recent Windows NVIDIA driver
+      - mujoco
+      - mujoco-mjx
+      - flax
+      - optax

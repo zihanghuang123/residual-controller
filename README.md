@@ -58,7 +58,8 @@ python scripts/train_pure.py             # → pure_params.pkl
 python scripts/train_theta_estimator.py  # → theta_params.pkl
 python scripts/train_controller.py       # → controller_params.pkl
 python scripts/evaluate.py               # → metrics.npz
-python scripts/plot.py                   # → training_curves.png, eval_metrics.png
+python scripts/plot_final.py                   # → training_curves.png, eval_metrics.png
+python scripts/plot_eval_rollouts.py
 ```
 
 Each training script reads `trajectories.npz` and the relevant `cfg` dict

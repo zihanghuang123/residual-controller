@@ -164,7 +164,7 @@ def main():
         params, opt_state, loss = train_step(params, opt_state, theta_keys, idxs, t0s)
         loss_history[i] = float(loss)
 
-        if i % 10 == 0 or i == n_iterations - 1:
+        if i % 50 == 0 or i == n_iterations - 1:
             print(f"  iter {i:5d}  loss = {float(loss):.6f}")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

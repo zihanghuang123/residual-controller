@@ -24,7 +24,7 @@
   </worldbody>
 
   <actuator>
-    <motor name="motor1" joint="hinge1" ctrllimited="true" ctrlrange="-10 10"/>
-    <motor name="motor2" joint="hinge2" ctrllimited="true" ctrlrange="-10 10"/>
+    <motor name="motor1" joint="hinge1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="motor2" joint="hinge2" ctrllimited="true" ctrlrange="-200 200"/>
   </actuator>
 </mujoco>

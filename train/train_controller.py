@@ -1,7 +1,6 @@
 """Train the controller with frozen theta estimator (Stage 2 of two-model approach).
 
-Loads the theta estimator params from Stage 1 and trains the controller end-to-end via BPTT through MJX under DR. At each rollout step the theta estimator predicts theta_hat from the current (x, u) history, and the controller sees theta_hat as an
-extra input alongside history + reference. Theta params are captured in the closure (not function arguments) so jax.grad differentiates only w.r.t. controller params.
+Loads the theta estimator params from Stage 1 and trains the controller end-to-end via BPTT through MJX under DR. At each rollout step the theta estimator predicts theta_hat from the current (x, u) history, and the controller sees theta_hat as an extra input alongside history + reference.
 """
 
 import pickle
@@ -195,7 +194,7 @@ def main():
         )
         loss_history[i] = float(loss)
 
-        if i % 10 == 0 or i == n_iterations - 1:
+        if i % 50 == 0 or i == n_iterations - 1:
             print(f"  iter {i:5d}  loss = {float(loss):.6f}")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
