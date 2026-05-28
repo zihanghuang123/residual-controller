@@ -1,8 +1,8 @@
-# Neural Residual Controller (Phase 1: double pendulum)
+# Neural Residual Controller
 
 A from-scratch implementation of a neural residual controller robust to plant/model mismatch. Trained end-to-end via backpropagation through differentiable physics (MJX) under domain randomization. Compares three architectures on a swing-up task.
 
-## What this is
+## Formulation
 
 The control law applied to the plant at every step:
 
@@ -50,16 +50,24 @@ At evaluation (`scripts/evaluate.py`), rollouts run the **full `T` steps** to te
 
 ## Pipeline
 
-Run in this order:
+Core run order — `train/` produces artifacts, `eval/` consumes them:
 
 ```
-python scripts/solve_trajectory.py       # → trajectories.npz
-python scripts/train_pure.py             # → pure_params.pkl
-python scripts/train_theta_estimator.py  # → theta_params.pkl
-python scripts/train_controller.py       # → controller_params.pkl
-python scripts/evaluate.py               # → metrics.npz
-python scripts/plot_final.py                   # → training_curves.png, eval_metrics.png
-python scripts/plot_eval_rollouts.py
+python train/solve_trajectory.py         # → trajectories.npz
+python train/train_pure.py               # → pure_params.pkl
+python train/train_theta_estimator.py    # → theta_params.pkl
+python train/train_controller.py         # → controller_params.pkl
+python eval/evaluate.py                  # → metrics.npz   (pd / pure / two_model)
+python eval/plot_final.py                # → training_curves.png, eval_metrics.png
+```
+
+Additional eval / diagnostic scripts, run as needed:
+
+```
+python eval/plot_trajectories.py         # sanity-check the TO references (no GPU/MuJoCo)
+python eval/plot_eval_rollouts.py        # closed-loop rollout viz, per plant
+python eval/evaluate_pure.py             # full pd-vs-pure metrics + |v|rms → metrics_pure.npz
+python eval/evaluate_estimator.py        # per-parameter θ identifiability (R²)
 ```
 
 Each training script reads `trajectories.npz` and the relevant `cfg` dict
@@ -82,7 +90,7 @@ Plant-specific code is isolated in `<plant>/` directories. To port to a new robo
    - `DR_RANGES` and `THETA_DIM` — if the DR structure changes (e.g., different per-link parameters), also edit `lib/domain_randomization.py`'s `sample_theta` / `apply_theta`
    - `PURE`, `THETA`, `CONTROLLER` hyperparameter dicts
 
-3. **Switch imports in `scripts/*.py`** — change `from double_pendulum import config as cfg`
+3. **Switch imports in `train/*.py` and `eval/*.py`** — change `from double_pendulum import config as cfg`
    to `from <plant> import config as cfg`.
 
 4. **Things in `lib/` that should NOT need changing**: networks, rollout, losses are
@@ -99,13 +107,18 @@ lib/
   domain_randomization.py  sample_theta + apply_theta
   rollout.py             unified MJX closed-loop rollout
   losses.py              tracking / control / theta / endpoint losses (angle-wrapped)
-scripts/
+train/
   solve_trajectory.py    Crocoddyl FDDP on nominal plant, N trajectories
-  train_pure.py          BPTT through MJX, Ryan-style baseline
+  train_pure.py          BPTT through MJX, pure-MLP residual baseline
   train_theta_estimator.py   PD-only rollouts → sysid MLP (no BPTT)
   train_controller.py    BPTT through MJX, two-model with frozen θ̂
+eval/
   evaluate.py            1000 held-out rollouts × 3 controllers, endpoint + tracking
-  plot.py                loss curves + eval-metric figures
+  evaluate_pure.py       pd vs pure only (skips two-model), adds |v|rms
+  evaluate_estimator.py  per-parameter θ identifiability (R² / RMSE)
+  plot_final.py          loss curves + eval-metric figures
+  plot_trajectories.py   TO reference sanity check (angles + cartesian strobe)
+  plot_eval_rollouts.py  closed-loop rollout viz, pd vs pure
 outputs/double_pendulum/ artifacts written by the pipeline
 ```
 
