@@ -1,6 +1,6 @@
 # Neural Residual Controller
 
-A from-scratch implementation of a neural residual controller robust to plant/model mismatch. Trained end-to-end via backpropagation through differentiable physics (MJX) under domain randomization. Compares three architectures on a swing-up task.
+An implementation of a neural residual controller robust to plant/model mismatch. Trained end-to-end via backpropagation through differentiable physics (MJX) under domain randomization.
 
 ## Formulation
 
@@ -12,15 +12,14 @@ u(t) = u*(t) + PD(x*(t) - x(t)) + v(t)
 
 where `u*` and `x*` come from offline trajectory optimization on the _nominal_ plant, `PD` is a fixed feedback term, and `v(t)` is a learned residual whose purpose is to correct for the gap between the nominal plant (used by TO) and the actual plant.
 
-Three options for `v(t)` are compared:
+Four options for `v(t)`:
 
 - **PD-only**: `v(t) = 0` (no residual)
 - **Pure MLP**: `v(t) = MLP(history, reference)`
 - **Two-model**: `v(t) = MLP(history, reference, θ_hat)` where `θ_hat = estimator(history)`
+- **Oracle**: `v(t) = MLP(history, reference, θ)` — upper bound for two-model, fed the true θ
 
-Pure MLP is the natural baseline ("just give the network everything and let it figure out the plant").
-Two-model decouples the problem: a separate frozen estimator does
-system identification from observed `(x, u)` history, and the controller gets `θ_hat` as an explicit input.
+Pure MLP is the natural baseline ("give the network everything and let it figure out the plant"). Two-model decouples the problem: a separate frozen estimator does system identification from observed `(x, u)` history, and the controller gets `θ_hat` as an explicit input. Oracle is what two-model could achieve if the estimator were perfect.
 
 ## Domain randomization
 
@@ -38,63 +37,75 @@ The estimator's input is **history only** — `(x_hist, u_hist)`. References car
 
 Trajectories from `solve_trajectory.py` have horizon `T = SIM_DURATION / TIMESTEP` steps (1000 for the double pendulum at 2 s, 2 ms). Backpropagating through all `T` MJX steps per iteration is impractical: memory grows linearly with `T`, and gradient norms can explode through long unrolls of stiff dynamics.
 
-Instead, each training iteration samples a random window of length `n_rollout = H` (= 100) from a random TO trajectory and a random start index `t0`. The rollout starts at the reference state `x_refs[idx, t0]`, runs for `H` MJX steps under the closed-loop law, and the loss is computed over the resulting `H+1` states (the `H` rolled-out states plus the post-step terminal state):
+Instead, each training iteration samples a random window of length `H = cfg.PURE["n_rollout"]` from a random TO trajectory and a random start index `t0`. The rollout starts at the reference state `x_refs[idx, t0]`, runs for `H` MJX steps under the closed-loop law, and the loss is computed over the resulting `H+1` states:
 
 ```
 tracking_loss(xs_full, x_refs[idx, t0:t0+H+1], nq) + alpha_reg * reg_loss(vs)
 ```
 
-Each iteration sees a different combination of (trajectory, start time, plant) so over many iterations the controller is exposed to every segment of the swing-up under a wide distribution of plants. The history buffers (`x_hist0`, `u_hist0`, ...) are initialized by padding with `x_refs[idx, t0]` — a simplification that matches what deployment will see in its first few steps.
+Each iteration sees a different combination of (trajectory, start time, plant). The history buffers are initialized by padding with `x_refs[idx, t0]` — matching what deployment will see in its first few steps.
 
-At evaluation (`scripts/evaluate.py`), rollouts run the **full `T` steps** to test whether each controller actually completes the task end-to-end.
+At evaluation, rollouts run the **full `T` steps** to test whether each controller actually completes the task end-to-end. This train-vs-eval horizon mismatch is real and can show up as a long-horizon generalization gap (more training → larger `|v|` → compounding errors over `T > H` steps).
 
 ## Pipeline
 
-Core run order — `train/` produces artifacts, `eval/` consumes them:
+Core run order — `train/` produces artifacts, `eval/` consumes them. The `--config` flag selects the plant config; default is `double_pendulum/config.py`.
 
 ```
 python train/solve_trajectory.py         # → trajectories.npz
 python train/train_pure.py               # → pure_params.pkl
+python train/train_oracle.py             # → oracle_params.pkl
 python train/train_theta_estimator.py    # → theta_params.pkl
 python train/train_controller.py         # → controller_params.pkl
 python eval/evaluate.py                  # → metrics.npz   (pd / pure / two_model)
 python eval/plot_final.py                # → training_curves.png, eval_metrics.png
 ```
 
-Additional eval / diagnostic scripts, run as needed:
+For a different plant, point at its config:
 
 ```
-python eval/plot_trajectories.py         # sanity-check the TO references (no GPU/MuJoCo)
-python eval/plot_eval_rollouts.py        # closed-loop rollout viz, per plant
-python eval/evaluate_pure.py             # full pd-vs-pure metrics + |v|rms → metrics_pure.npz
-python eval/evaluate_estimator.py        # per-parameter θ identifiability (R²)
+python train/solve_trajectory.py --config triple_pendulum/config.py
+python train/train_pure.py --config triple_pendulum/config.py
+# ... etc
 ```
 
-Each training script reads `trajectories.npz` and the relevant `cfg` dict
-(`cfg.PURE`, `cfg.THETA`, `cfg.CONTROLLER`). All outputs land in
-`outputs/double_pendulum/`.
+Additional eval / diagnostic scripts:
+
+```
+python eval/plot_trajectories.py         # TO reference sanity check (no MuJoCo)
+python eval/plot_eval_rollouts.py        # closed-loop rollout viz
+python eval/evaluate_pure.py             # pd vs pure only, adds |v|rms
+python eval/evaluate_oracle.py           # pd vs oracle only
+python eval/evaluate_estimator.py        # per-parameter θ R² / RMSE
+```
+
+RNN variants of the controller and estimator:
+
+```
+python train/train_pure_rnn.py
+python train/train_theta_estimator_rnn.py
+python eval/evaluate_pure_rnn.py
+```
+
+Outputs land in `cfg.OUTPUT_DIR`, which defaults to `outputs/<plant>/<config_stem>/`. Different config files on the same plant (e.g. `config.py` vs `config_big.py`) write to different output directories and can be trained in parallel on the same GPU without collision.
 
 ## Porting to a different plant
 
-Plant-specific code is isolated in `<plant>/` directories. To port to a new robot:
+Plant-specific code lives in `<plant>/` directories. To port to a new robot:
 
-1. **Create `<plant>/model.xml`** (MJCF). Must be Pinocchio-compatible: no Mujoco-only
-   Features Pinocchio's `buildModelFromMJCF` rejects (mesh decompositions, exotic actuator types). Set `contype=0 conaffinity=0` to disable contact if contact-free training is desired.
+1. **Create `<plant>/model.xml`** (MJCF). Must be Pinocchio-compatible: avoid features `buildModelFromMJCF` rejects (mesh decompositions, exotic actuator types). Set `contype=0 conaffinity=0` to disable contact if contact-free training is desired.
 
-2. **Create `<plant>/config.py`** with at minimum:
-   - `MODEL_PATH`, `NQ`, `NV`, `NU`, `N_LINKS`
+2. **Create `<plant>/config.py`** following the structure of `double_pendulum/config.py`. At minimum:
+   - `OUTPUT_DIR`, `MODEL_PATH`, `PLANT_NAME` (all derived from `__file__`)
+   - `NQ`, `NV`, `NU`, `N_LINKS`
    - `TIMESTEP`, `SIM_DURATION` (often needs retuning — fast plants need smaller dt)
-   - `KP`, `KD` — per-DoF feedback gains
+   - `KP`, `KD` — per-DoF feedback gains (usually tapered with joint depth on multi-link arms)
    - `INITIAL_QPOS_RANGE`, `TARGET_QPOS_RANGE`, `N_TRAJECTORIES`
-   - `TO_COST_X_RUNNING`, `TO_COST_U_RUNNING`, `TO_COST_X_TERMINAL` — TO weights; usually need retuning per plant
-   - `DR_RANGES` and `THETA_DIM` — if the DR structure changes (e.g., different per-link parameters), also edit `lib/domain_randomization.py`'s `sample_theta` / `apply_theta`
-   - `PURE`, `THETA`, `CONTROLLER` hyperparameter dicts
+   - `TO_COST_X_RUNNING`, `TO_COST_U_RUNNING`, `TO_COST_X_TERMINAL` — TO weights; often need retuning per plant
+   - `DR_RANGES` and `THETA_DIM` — if the DR structure changes (different per-link parameters), also edit `lib/domain_randomization.py`
+   - `PURE`, `THETA`, `CONTROLLER`, `ORACLE` hyperparameter dicts (RNN variants if used)
 
-3. **Switch imports in `train/*.py` and `eval/*.py`** — change `from double_pendulum import config as cfg`
-   to `from <plant> import config as cfg`.
-
-4. **Things in `lib/` that should NOT need changing**: networks, rollout, losses are
-   plant-agnostic and only depend on dimensions from the config.
+3. **Run with `--config <plant>/config.py`** — no source edits needed.
 
 ## Repo layout
 
@@ -102,28 +113,36 @@ Plant-specific code is isolated in `<plant>/` directories. To port to a new robo
 double_pendulum/
   config.py              plant constants + DR + hyperparam dicts
   model.xml              MJCF (Pinocchio-compatible)
+triple_pendulum/
+  config.py              same structure, NQ/NV/NU=3, gains tapered with depth
+  model.xml              extended chain
 lib/
-  networks.py            flax MLPs: pure controller / controller / theta estimator
+  networks.py            flax MLPs + GRUs: pure controller / controller / θ estimator
   domain_randomization.py  sample_theta + apply_theta
-  rollout.py             unified MJX closed-loop rollout
+  rollout.py             MJX closed-loop rollout (MLP-style history-buffer + RNN-style hidden-state)
   losses.py              tracking / control / theta / endpoint losses (angle-wrapped)
+  training.py            shared scaffolding: --config arg, MJX setup, BPTT train loop
+  evaluation.py          shared scaffolding: vmap over plants, metric summary, npz save
 train/
-  solve_trajectory.py    Crocoddyl FDDP on nominal plant, N trajectories
-  train_pure.py          BPTT through MJX, pure-MLP residual baseline
+  solve_trajectory.py        Crocoddyl FDDP on nominal plant, N trajectories
+  train_pure.py              BPTT through MJX, pure-MLP residual
+  train_oracle.py            same arch as two-model, fed ground-truth θ (upper bound)
   train_theta_estimator.py   PD-only rollouts → sysid MLP (no BPTT)
-  train_controller.py    BPTT through MJX, two-model with frozen θ̂
+  train_controller.py        BPTT through MJX, two-model with frozen θ̂
+  train_pure_rnn.py          GRU variant of pure
+  train_theta_estimator_rnn.py  GRU variant of θ estimator
 eval/
-  evaluate.py            1000 held-out rollouts × 3 controllers, endpoint + tracking
-  evaluate_pure.py       pd vs pure only (skips two-model), adds |v|rms
-  evaluate_estimator.py  per-parameter θ identifiability (R² / RMSE)
+  evaluate.py            held-out rollouts × {pd, pure, two_model}, endpoint + tracking
+  evaluate_pure.py       pd vs pure only, adds |v|rms
+  evaluate_oracle.py     pd vs oracle only
+  evaluate_pure_rnn.py   pd vs pure_rnn
+  evaluate_estimator.py  per-parameter θ R² / RMSE
   plot_final.py          loss curves + eval-metric figures
   plot_trajectories.py   TO reference sanity check (angles + cartesian strobe)
   plot_eval_rollouts.py  closed-loop rollout viz, pd vs pure
-outputs/double_pendulum/ artifacts written by the pipeline
+outputs/<plant>/<config_stem>/  artifacts written by the pipeline
 ```
 
 ## Dependencies
 
-Linux + NVIDIA GPU. Crocoddyl + Pinocchio + JAX + MJX are Linux-only via conda-forge.
-The code does not run on Windows (some pip installs hit Windows MAX_PATH limits and
-Crocoddyl is Linux-only on conda-forge).
+Linux + NVIDIA GPU. Crocoddyl + Pinocchio + JAX + MJX are Linux-only via conda-forge. On Windows, run inside WSL2 (Ubuntu) — that's the tested path. On shared compute where `sudo apt install` isn't allowed, build inside a Docker container — NVIDIA's `nvcr.io/nvidia/jax:24.04-py3` image is a good base, with `--gpus all -v $PWD:/workspace` for code mounting. See `environment.yml` for the conda recipe.

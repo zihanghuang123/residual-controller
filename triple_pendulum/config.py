@@ -25,7 +25,7 @@ N_LINKS = 3
 
 # Trajectory horizon
 TIMESTEP = 0.002
-SIM_DURATION = 2.0
+SIM_DURATION = 5.0
 N_STEPS = int(SIM_DURATION / TIMESTEP)
 
 
@@ -36,7 +36,7 @@ KD = np.array([2.0, 0.5, 0.1])
 
 
 # Library of (x0, xf) pairs
-N_TRAJECTORIES = 50
+N_TRAJECTORIES = 200
 INITIAL_QPOS_RANGE = (np.array([-0.5, -0.5, -0.5]), np.array([0.5, 0.5, 0.5]))
 TARGET_QPOS_RANGE = (np.array([np.pi - 0.5, -0.5, -0.5]), np.array([np.pi + 0.5, 0.5, 0.5]))
 TRAJECTORY_SAMPLE_SEED = 42
