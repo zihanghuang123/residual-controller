@@ -56,9 +56,9 @@ THETA_DIM = 3 * N_LINKS
 # Input:  history (x, u) + reference (x*, u*)
 # Output: v in R^NU
 PURE = {
-    "hidden_sizes": (256, 256),
-    "n_history": 200,        # w
-    "n_rollout": 600,       # H (BPTT window)
+    "hidden_sizes": (128, 128),
+    "n_history": 100,        # w
+    "n_rollout": 300,       # H (BPTT window)
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 6000,
@@ -84,9 +84,24 @@ THETA = {
 # Input:  history (x, u) + reference (x*, u*) + theta_estimate
 # Output: v in R^NU
 CONTROLLER = {
-    "hidden_sizes": (256, 256),
-    "n_history": 200,
-    "n_rollout": 600,
+    "hidden_sizes": (128, 128),
+    "n_history": 100,
+    "n_rollout": 300,
+    "batch_size": 64,
+    "lr": 3e-4,
+    "n_iterations": 6000,
+    "grad_clip_norm": 1.0,
+    "alpha_reg": 1e-5,
+}
+
+
+# Oracle controller (upper bound for two-model)
+# Input:  history (x, u) + reference (x*, u*) + true_theta
+# Output: v in R^NU
+ORACLE = {
+    "hidden_sizes": (128, 128),
+    "n_history": 100,
+    "n_rollout": 300,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 6000,
