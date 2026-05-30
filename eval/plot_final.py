@@ -1,8 +1,10 @@
-"""Generate training-curve and eval-metric figures from outputs/double_pendulum/.
+"""Generate training-curve and eval-metric figures from cfg.OUTPUT_DIR.
 
-Reads loss histories and metrics.npz, writes two PNGs into the same directory:
-    training_curves.png  — log-y loss vs iteration for PURE, THETA, CONTROLLER
+Reads whichever loss histories and metric files exist and writes:
+    training_curves.png  — log-y loss vs iteration for each available training run
     eval_metrics.png     — endpoint + tracking error distributions (box + histogram)
+
+Skips controllers whose loss/metric files aren't present.
 """
 
 import sys
@@ -14,21 +16,26 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import matplotlib.pyplot as plt
 import numpy as np
 
-OUTPUT_DIR = PROJECT_ROOT / "outputs" / "double_pendulum"
-PURE_LOSS_PATH = OUTPUT_DIR / "pure_loss_history.npy"
-THETA_LOSS_PATH = OUTPUT_DIR / "theta_loss_history.npy"
-CONTROLLER_LOSS_PATH = OUTPUT_DIR / "controller_loss_history.npy"
-METRICS_PATH = OUTPUT_DIR / "metrics.npz"
+from lib import training
 
-TRAINING_FIG_PATH = OUTPUT_DIR / "training_curves.png"
-EVAL_FIG_PATH = OUTPUT_DIR / "eval_metrics.png"
+# Loss histories to look for. {label: filename}.
+LOSS_FILES = {
+    "PURE controller": "pure_loss_history.npy",
+    "ORACLE controller": "oracle_loss_history.npy",
+    "theta estimator": "theta_loss_history.npy",
+    "two-model controller": "controller_loss_history.npy",
+}
 
-CONTROLLER_NAMES = ["pd", "pure", "two_model"]
-CONTROLLER_COLORS = {"pd": "tab:gray", "pure": "tab:orange", "two_model": "tab:blue"}
+# Controllers that appear in metrics.npz (or metrics_pure.npz / metrics_oracle.npz).
+CONTROLLER_COLORS = {
+    "pd": "tab:gray",
+    "pure": "tab:orange",
+    "oracle": "tab:green",
+    "two_model": "tab:blue",
+}
 
 
-def plot_loss_curve(loss_history: np.ndarray, ax: plt.Axes, title: str) -> None:
-    """Single log-y loss curve on the given axes."""
+def plot_loss_curve(loss_history, ax, title):
     ax.plot(loss_history)
     ax.set_yscale("log")
     ax.set_xlabel("iteration")
@@ -37,8 +44,7 @@ def plot_loss_curve(loss_history: np.ndarray, ax: plt.Axes, title: str) -> None:
     ax.grid(True, which="both", alpha=0.3)
 
 
-def plot_distribution(values_dict: dict, ax: plt.Axes, title: str, ylabel: str) -> None:
-    """Side-by-side box plot for {controller_name: 1D array}."""
+def plot_distribution(values_dict, ax, title, ylabel):
     names = list(values_dict.keys())
     data = [values_dict[n] for n in names]
     bp = ax.boxplot(data, labels=names, showfliers=True, patch_artist=True)
@@ -50,8 +56,7 @@ def plot_distribution(values_dict: dict, ax: plt.Axes, title: str, ylabel: str) 
     ax.grid(True, axis="y", alpha=0.3)
 
 
-def plot_histogram(values_dict: dict, ax: plt.Axes, title: str, xlabel: str, bins: int = 40) -> None:
-    """Overlapped histograms for {controller_name: 1D array}."""
+def plot_histogram(values_dict, ax, title, xlabel, bins=40):
     all_vals = np.concatenate(list(values_dict.values()))
     bin_edges = np.linspace(all_vals.min(), all_vals.max(), bins + 1)
     for name, vals in values_dict.items():
@@ -64,27 +69,58 @@ def plot_histogram(values_dict: dict, ax: plt.Axes, title: str, xlabel: str, bin
     ax.grid(True, alpha=0.3)
 
 
-def make_training_figure(save_path: Path) -> None:
-    """Three-panel figure: PURE, THETA, CONTROLLER loss curves."""
-    pure_loss = np.load(PURE_LOSS_PATH)
-    theta_loss = np.load(THETA_LOSS_PATH)
-    controller_loss = np.load(CONTROLLER_LOSS_PATH)
+def make_training_figure(output_dir, save_path):
+    """One panel per available loss history."""
+    available = {label: output_dir / fname for label, fname in LOSS_FILES.items()
+                 if (output_dir / fname).exists()}
+    if not available:
+        print("no loss history files found — skipping training_curves.png")
+        return
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-    plot_loss_curve(pure_loss, axes[0], "PURE controller")
-    plot_loss_curve(theta_loss, axes[1], "theta estimator")
-    plot_loss_curve(controller_loss, axes[2], "two-model controller")
+    n = len(available)
+    fig, axes = plt.subplots(1, n, figsize=(5 * n, 4), squeeze=False)
+    for ax, (label, path) in zip(axes[0], available.items()):
+        plot_loss_curve(np.load(path), ax, label)
     fig.tight_layout()
     fig.savefig(save_path, dpi=120)
     plt.close(fig)
-    print(f"saved {save_path}")
+    print(f"saved {save_path}  ({n} panel(s): {list(available.keys())})")
 
 
-def make_eval_figure(save_path: Path) -> None:
+def collect_metrics(output_dir):
+    """Merge metrics from metrics.npz / metrics_pure.npz / metrics_oracle.npz if any exist.
+
+    Returns {controller_name: {'endpoint': arr, 'tracking': arr}}.
+    """
+    by_controller = {}
+    for fname in ("metrics.npz", "metrics_pure.npz", "metrics_oracle.npz"):
+        path = output_dir / fname
+        if not path.exists():
+            continue
+        data = np.load(path)
+        for key in data.files:
+            # Keys are endpoint_<name>, tracking_<name>, vrms_<name>
+            parts = key.split("_", 1)
+            if len(parts) != 2:
+                continue
+            metric, name = parts
+            if metric not in ("endpoint", "tracking"):
+                continue
+            by_controller.setdefault(name, {})[metric] = data[key]
+    return by_controller
+
+
+def make_eval_figure(output_dir, save_path):
     """2x2 grid: endpoint (box, hist) on top, tracking (box, hist) on bottom."""
-    data = np.load(METRICS_PATH)
-    endpoint = {n: data[f"endpoint_{n}"] for n in CONTROLLER_NAMES}
-    tracking_rms = {n: np.sqrt(data[f"tracking_{n}"]) for n in CONTROLLER_NAMES}
+    by_controller = collect_metrics(output_dir)
+    if not by_controller:
+        print("no metrics npz files found — skipping eval_metrics.png")
+        return
+
+    endpoint = {n: by_controller[n]["endpoint"]
+                for n in by_controller if "endpoint" in by_controller[n]}
+    tracking_rms = {n: np.sqrt(by_controller[n]["tracking"])
+                    for n in by_controller if "tracking" in by_controller[n]}
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     plot_distribution(endpoint, axes[0, 0], "endpoint error (box)", "L2 distance")
@@ -94,13 +130,14 @@ def make_eval_figure(save_path: Path) -> None:
     fig.tight_layout()
     fig.savefig(save_path, dpi=120)
     plt.close(fig)
-    print(f"saved {save_path}")
+    print(f"saved {save_path}  (controllers: {list(endpoint.keys())})")
 
 
-def main() -> None:
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    make_training_figure(TRAINING_FIG_PATH)
-    make_eval_figure(EVAL_FIG_PATH)
+def main():
+    cfg = training.load_config()
+    cfg.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    make_training_figure(cfg.OUTPUT_DIR, cfg.OUTPUT_DIR / "training_curves.png")
+    make_eval_figure(cfg.OUTPUT_DIR, cfg.OUTPUT_DIR / "eval_metrics.png")
 
 
 if __name__ == "__main__":
