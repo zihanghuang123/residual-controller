@@ -1,6 +1,6 @@
 """Solve trajectory optimization on the nominal plant via Crocoddyl FDDP.
 
-Generates N_TRAJECTORIES trajectories from sampled (x_init, x_target) pairs and stacks them into a single .npz at outputs/double_pendulum/trajectories.npz.
+Generates N_TRAJECTORIES trajectories from sampled (x_init, x_target) pairs and stacks them into a single .npz at <cfg.OUTPUT_DIR>/trajectories.npz.
 """
 
 import sys
@@ -13,18 +13,15 @@ import crocoddyl
 import numpy as np
 import pinocchio as pin
 
-from double_pendulum import config as cfg
-
-OUTPUT_DIR = PROJECT_ROOT / "outputs" / "double_pendulum"
-OUTPUT_PATH = OUTPUT_DIR / "trajectories.npz"
+from lib import training
 
 
-def build_model() -> pin.Model:
+def build_model(cfg) -> pin.Model:
     """Load the Pinocchio model from the plant's MJCF."""
     return pin.buildModelFromMJCF(str(cfg.MODEL_PATH))
 
 
-def build_problem(model: pin.Model,
+def build_problem(cfg, model: pin.Model,
                   x_init: np.ndarray,
                   x_target: np.ndarray) -> crocoddyl.ShootingProblem:
     """Assemble the Crocoddyl shooting problem for one (x_init, x_target) pair."""
@@ -56,13 +53,12 @@ def build_problem(model: pin.Model,
     running_action = crocoddyl.IntegratedActionModelEuler(running_diff, cfg.TIMESTEP)
     terminal_action = crocoddyl.IntegratedActionModelEuler(terminal_diff, 0.0)
 
-    # Position in ShootingProblem assigns the role: 3rd arg is the terminal action.
     return crocoddyl.ShootingProblem(x_init, [running_action] * cfg.N_STEPS, terminal_action)
 
 
-def solve_one(model: pin.Model, x_init: np.ndarray, x_target: np.ndarray):
+def solve_one(cfg, model: pin.Model, x_init: np.ndarray, x_target: np.ndarray):
     """Solve one TO. Returns (xs, us, converged)."""
-    problem = build_problem(model, x_init, x_target)
+    problem = build_problem(cfg, model, x_init, x_target)
     solver = crocoddyl.SolverFDDP(problem)
 
     nu = problem.runningModels[0].nu
@@ -76,7 +72,7 @@ def solve_one(model: pin.Model, x_init: np.ndarray, x_target: np.ndarray):
     return xs, us, converged
 
 
-def sample_targets(n_trajectories: int, seed: int):
+def sample_targets(cfg, n_trajectories: int, seed: int):
     """Sample N (x_init, x_target) pairs uniformly from config ranges. qvel = 0 for both."""
     rng = np.random.default_rng(seed)
 
@@ -92,28 +88,31 @@ def sample_targets(n_trajectories: int, seed: int):
 
 
 def main() -> None:
+    cfg = training.load_config()
+    output_path = cfg.OUTPUT_DIR / "trajectories.npz"
+
     print(f"loading Pinocchio model from {cfg.MODEL_PATH}")
-    model = build_model()
+    model = build_model(cfg)
     print(f"  nq={model.nq}  nv={model.nv}")
 
     print(f"sampling {cfg.N_TRAJECTORIES} (x_init, x_target) pairs ...")
-    x_inits, x_targets = sample_targets(cfg.N_TRAJECTORIES, cfg.TRAJECTORY_SAMPLE_SEED)
+    x_inits, x_targets = sample_targets(cfg, cfg.N_TRAJECTORIES, cfg.TRAJECTORY_SAMPLE_SEED)
 
     x_refs = []
     u_refs = []
     converged_flags = []
 
     for i in range(cfg.N_TRAJECTORIES):
-        xs, us, converged = solve_one(model, x_inits[i], x_targets[i])
+        xs, us, converged = solve_one(cfg, model, x_inits[i], x_targets[i])
         x_refs.append(xs)
         u_refs.append(us)
         converged_flags.append(converged)
         status = "OK  " if converged else "FAIL"
         print(f"  trajectory {i + 1:3d}/{cfg.N_TRAJECTORIES}  {status}")
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    cfg.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     np.savez(
-        OUTPUT_PATH,
+        output_path,
         x_refs=np.stack(x_refs),                  # (N, T+1, 2*nq)
         u_refs=np.stack(u_refs),                  # (N, T,   nu)
         x_inits=x_inits,                          # (N, 2*nq)
@@ -121,7 +120,7 @@ def main() -> None:
         converged=np.array(converged_flags),      # (N,)
     )
     n_ok = sum(converged_flags)
-    print(f"saved {OUTPUT_PATH}")
+    print(f"saved {output_path}")
     print(f"converged: {n_ok}/{cfg.N_TRAJECTORIES}")
 
 

@@ -3,6 +3,8 @@
 Used by train_pure / train_controller / train_oracle. Each script keeps only what's unique to it: paths, the network class, and a small `build_controller_fn(params, theta) -> controller_fn` factory describing how a single step's residual is computed.
 """
 
+import argparse
+import importlib.util
 import pickle
 from pathlib import Path
 
@@ -15,6 +17,21 @@ from mujoco import mjx
 
 from lib import losses, rollout
 from lib.domain_randomization import apply_theta, sample_theta
+
+
+def load_config(default="double_pendulum/config.py"):
+    """Parse --config CLI arg, load the plant config module from the given file path.
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default=default,
+                        help="Path to plant config .py file (e.g. double_pendulum/config.py)")
+    args = parser.parse_args()
+
+    config_path = Path(args.config).resolve()
+    spec = importlib.util.spec_from_file_location("plant_cfg", config_path)
+    cfg = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cfg)
+    return cfg
 
 
 def load_trajectories(traj_path: Path):

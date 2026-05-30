@@ -7,7 +7,10 @@ import numpy as np
 
 # Paths
 HERE = Path(__file__).parent
+PROJECT_ROOT = HERE.parent
 MODEL_PATH = HERE / "model.xml"
+PLANT_NAME = HERE.name
+OUTPUT_DIR = PROJECT_ROOT / "outputs" / PLANT_NAME / Path(__file__).stem
 
 
 # Plant dimensions

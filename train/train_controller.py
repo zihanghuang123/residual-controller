@@ -13,23 +13,16 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import jax
 import jax.numpy as jnp
 
-from double_pendulum import config as cfg
 from lib import rollout, training
 from lib.networks import MLPController, MLPThetaEstimator
 
-OUTPUT_DIR = PROJECT_ROOT / "outputs" / "double_pendulum"
-TRAJ_PATH = OUTPUT_DIR / "trajectories.npz"
-THETA_PARAMS_PATH = OUTPUT_DIR / "theta_params.pkl"
-PARAMS_PATH = OUTPUT_DIR / "controller_params.pkl"
-LOSS_PATH = OUTPUT_DIR / "controller_loss_history.npy"
 
-
-def load_theta_params():
-    with open(THETA_PARAMS_PATH, "rb") as f:
+def load_theta_params(theta_params_path):
+    with open(theta_params_path, "rb") as f:
         return pickle.load(f)
 
 
-def init_network(key):
+def init_network(cfg, key):
     network = MLPController(hidden_sizes=cfg.CONTROLLER["hidden_sizes"], out_dim=cfg.NU)
     in_dim = training.mlp_residual_input_dim(cfg, cfg.CONTROLLER["n_history"], with_theta=True)
     params = network.init(key, jnp.zeros(in_dim))
@@ -52,20 +45,24 @@ def make_build_controller_fn(controller_network, theta_network, theta_params):
 
 
 def main():
+    cfg = training.load_config()
+
     print("loading frozen theta estimator ...")
-    theta_params = load_theta_params()
+    theta_params = load_theta_params(cfg.OUTPUT_DIR / "theta_params.pkl")
     theta_network = MLPThetaEstimator(hidden_sizes=cfg.THETA["hidden_sizes"], theta_dim=cfg.THETA_DIM)
 
     print("initializing controller network ...")
     key = jax.random.PRNGKey(0)
     key, init_key = jax.random.split(key)
-    controller_network, controller_params = init_network(init_key)
+    controller_network, controller_params = init_network(cfg, init_key)
 
     training.train_mlp_controller(
         cfg, cfg.CONTROLLER,
         params=controller_params,
         build_controller_fn=make_build_controller_fn(controller_network, theta_network, theta_params),
-        traj_path=TRAJ_PATH, params_path=PARAMS_PATH, loss_path=LOSS_PATH,
+        traj_path=cfg.OUTPUT_DIR / "trajectories.npz",
+        params_path=cfg.OUTPUT_DIR / "controller_params.pkl",
+        loss_path=cfg.OUTPUT_DIR / "controller_loss_history.npy",
         key=key,
     )
 
