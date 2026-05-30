@@ -11,7 +11,6 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import jax
 import jax.numpy as jnp
-import optax
 
 from double_pendulum import config as cfg
 from lib import rollout, training
@@ -41,46 +40,18 @@ def make_build_controller_fn(network):
 
 
 def main():
-    print("loading trajectories ...")
-    x_refs, u_refs = training.load_trajectories(TRAJ_PATH)
-    n_traj, T_plus_1, _ = x_refs.shape
-    T = T_plus_1 - 1
-    H = cfg.PURE["n_rollout"]
-    print(f"  {n_traj} converged trajectories of length T={T}")
-
-    print("building MJX model ...")
-    mjx_model_nominal, nominal_body_mass = training.build_mjx_model(cfg.MODEL_PATH)
-
     print("initializing network ...")
     key = jax.random.PRNGKey(0)
     key, init_key = jax.random.split(key)
     network, params = init_network(init_key)
 
-    print("building optimizer ...")
-    optimizer = optax.chain(
-        optax.clip_by_global_norm(cfg.PURE["grad_clip_norm"]),
-        optax.adam(cfg.PURE["lr"]),
-    )
-    opt_state = optimizer.init(params)
-
-    loss_fn = training.make_mlp_residual_loss(
+    training.train_mlp_controller(
         cfg, cfg.PURE,
-        mjx_model_nominal, nominal_body_mass,
-        x_refs, u_refs,
+        params=params,
         build_controller_fn=make_build_controller_fn(network),
+        traj_path=TRAJ_PATH, params_path=PARAMS_PATH, loss_path=LOSS_PATH,
+        key=key,
     )
-    train_step = training.make_train_step(loss_fn, optimizer)
-
-    batch_size = cfg.PURE["batch_size"]
-    n_iterations = cfg.PURE["n_iterations"]
-    print(f"training: {n_iterations} iterations, batch={batch_size}, H={H}, w={cfg.PURE['n_history']}")
-    params, loss_history = training.training_loop(
-        key, params, opt_state, train_step,
-        batch_size=batch_size, n_iterations=n_iterations,
-        n_traj=n_traj, t0_max=T - H + 1,
-    )
-
-    training.save_results(params, loss_history, PARAMS_PATH, LOSS_PATH)
 
 
 if __name__ == "__main__":

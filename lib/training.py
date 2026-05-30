@@ -142,3 +142,51 @@ def save_results(params, loss_history, params_path: Path, loss_path: Path):
     np.save(loss_path, loss_history)
     print(f"saved {params_path}")
     print(f"saved {loss_path}")
+
+
+def train_mlp_controller(
+    cfg, cfg_dict,
+    params, build_controller_fn,
+    traj_path: Path, params_path: Path, loss_path: Path,
+    key,
+):
+    """End-to-end MLP residual controller training.
+
+    Caller pre-builds the network, initializes params, and constructs build_controller_fn (binding the network and any auxiliaries like a frozen theta estimator). Everything else — data, MJX model, optimizer, loss, train_step, loop, save — happens here.
+    """
+    print("loading trajectories ...")
+    x_refs, u_refs = load_trajectories(traj_path)
+    n_traj, T_plus_1, _ = x_refs.shape
+    T = T_plus_1 - 1
+    H = cfg_dict["n_rollout"]
+    print(f"  {n_traj} converged trajectories of length T={T}")
+
+    print("building MJX model ...")
+    mjx_model_nominal, nominal_body_mass = build_mjx_model(cfg.MODEL_PATH)
+
+    print("building optimizer ...")
+    optimizer = optax.chain(
+        optax.clip_by_global_norm(cfg_dict["grad_clip_norm"]),
+        optax.adam(cfg_dict["lr"]),
+    )
+    opt_state = optimizer.init(params)
+
+    loss_fn = make_mlp_residual_loss(
+        cfg, cfg_dict,
+        mjx_model_nominal, nominal_body_mass,
+        x_refs, u_refs,
+        build_controller_fn=build_controller_fn,
+    )
+    train_step = make_train_step(loss_fn, optimizer)
+
+    batch_size = cfg_dict["batch_size"]
+    n_iterations = cfg_dict["n_iterations"]
+    print(f"training: {n_iterations} iterations, batch={batch_size}, H={H}, w={cfg_dict['n_history']}")
+    params, loss_history = training_loop(
+        key, params, opt_state, train_step,
+        batch_size=batch_size, n_iterations=n_iterations,
+        n_traj=n_traj, t0_max=T - H + 1,
+    )
+
+    save_results(params, loss_history, params_path, loss_path)
+    return params, loss_history
