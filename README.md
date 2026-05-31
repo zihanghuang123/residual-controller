@@ -49,7 +49,7 @@ At evaluation, rollouts run the **full `T` steps** to test whether each controll
 
 ## Pipeline
 
-Core run order — `train/` produces artifacts, `eval/` consumes them. The `--config` flag selects the plant config; default is `double_pendulum/config.py`.
+Core run order — `train/` produces artifacts, `eval/` consumes them. The `--config` flag selects the plant config; default is `plants/double_pendulum/config.py`.
 
 ```
 python train/solve_trajectory.py         # → trajectories.npz
@@ -64,8 +64,8 @@ python eval/plot_final.py                # → training_curves.png, eval_metrics
 For a different plant, point at its config:
 
 ```
-python train/solve_trajectory.py --config triple_pendulum/config.py
-python train/train_pure.py --config triple_pendulum/config.py
+python train/solve_trajectory.py --config plants/triple_pendulum/config.py
+python train/train_pure.py --config plants/triple_pendulum/config.py
 # ... etc
 ```
 
@@ -102,11 +102,11 @@ Edit the `JOBS` array at the top of the script to control what runs and in what 
 
 ## Porting to a different plant
 
-Plant-specific code lives in `<plant>/` directories. To port to a new robot:
+Plant-specific code lives in `plants/<plant>/` directories. To port to a new robot:
 
-1. **Create `<plant>/model.xml`** (MJCF). Must be Pinocchio-compatible: avoid features `buildModelFromMJCF` rejects (mesh decompositions, exotic actuator types). Set `contype=0 conaffinity=0` to disable contact if contact-free training is desired.
+1. **Create `plants/<plant>/model.xml`** (MJCF). Must be Pinocchio-compatible: avoid features `buildModelFromMJCF` rejects (mesh decompositions, exotic actuator types). Set `contype=0 conaffinity=0` to disable contact if contact-free training is desired.
 
-2. **Create `<plant>/config.py`** following the structure of `double_pendulum/config.py`. At minimum:
+2. **Create `plants/<plant>/config.py`** following the structure of `plants/double_pendulum/config.py`. At minimum:
    - `OUTPUT_DIR`, `MODEL_PATH`, `PLANT_NAME` (all derived from `__file__`)
    - `NQ`, `NV`, `NU`, `N_LINKS`
    - `TIMESTEP`, `SIM_DURATION` (often needs retuning — fast plants need smaller dt)
@@ -116,17 +116,18 @@ Plant-specific code lives in `<plant>/` directories. To port to a new robot:
    - `DR_RANGES` and `THETA_DIM` — if the DR structure changes (different per-link parameters), also edit `lib/domain_randomization.py`
    - `PURE`, `THETA`, `CONTROLLER`, `ORACLE` hyperparameter dicts (RNN variants if used)
 
-3. **Run with `--config <plant>/config.py`** — no source edits needed.
+3. **Run with `--config plants/<plant>/config.py`** — no source edits needed.
 
 ## Repo layout
 
 ```
-double_pendulum/
-  config.py              plant constants + DR + hyperparam dicts
-  model.xml              MJCF (Pinocchio-compatible)
-triple_pendulum/
-  config.py              same structure, NQ/NV/NU=3, gains tapered with depth
-  model.xml              extended chain
+plants/
+  double_pendulum/
+    config.py            plant constants + DR + hyperparam dicts
+    model.xml            MJCF (Pinocchio-compatible)
+  triple_pendulum/       config.py (+ config1/config2 size variants), model.xml
+  four_pendulum/ ... seven_pendulum/   same structure, more links
+  kinova/                Kinova Gen3 assets (WIP)
 lib/
   networks.py            flax MLPs + GRUs: pure controller / controller / θ estimator
   domain_randomization.py  sample_theta + apply_theta

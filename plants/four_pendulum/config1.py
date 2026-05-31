@@ -1,6 +1,6 @@
-"""Big seven-pendulum config: 512x512, w=300, H=1000.
+"""Medium four-pendulum config: 256x256, w=200, H=600.
 
-Compound-scaled up further from config1.py.
+One step up from config.py along both axes -- capacity + horizon doubled.
 """
 
 from pathlib import Path
@@ -10,28 +10,28 @@ import numpy as np
 
 # Paths
 HERE = Path(__file__).parent
-PROJECT_ROOT = HERE.parent
+PROJECT_ROOT = HERE.parent.parent  # repo root (plants/<plant>/)
 MODEL_PATH = HERE / "model.xml"
 PLANT_NAME = HERE.name
 OUTPUT_DIR = PROJECT_ROOT / "outputs" / PLANT_NAME / Path(__file__).stem
 
 
 # Plant dimensions
-NQ = 7
-NV = 7
-NU = 7
-N_LINKS = 7
+NQ = 4
+NV = 4
+NU = 4
+N_LINKS = 4
 
 
 # Trajectory horizon
 TIMESTEP = 0.002
-SIM_DURATION = 9.0
+SIM_DURATION = 5.0
 N_STEPS = int(SIM_DURATION / TIMESTEP)
 
 
 # PD gains (per-joint). Tapered with depth: each level is 1/4 of the one above.
-KP = np.array([120.0, 30.0, 7.5, 1.88, 0.47, 0.12, 0.03])
-KD = np.array([6.0, 1.5, 0.38, 0.09, 0.02, 0.006, 0.0015])
+KP = np.array([60.0, 15.0, 3.75, 0.94])
+KD = np.array([3.0, 0.75, 0.19, 0.05])
 
 
 # Library of (x0, xf) pairs. Root joint swings up to pi; the rest target 0.
@@ -62,9 +62,9 @@ THETA_DIM = 3 * N_LINKS
 
 # Pure MLP residual
 PURE = {
-    "hidden_sizes": (512, 512),
-    "n_history": 300,
-    "n_rollout": 1000,
+    "hidden_sizes": (256, 256),
+    "n_history": 200,
+    "n_rollout": 600,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 5000,
@@ -76,7 +76,7 @@ PURE = {
 # Theta estimator
 THETA = {
     "hidden_sizes": (512, 512),
-    "n_history": 300,
+    "n_history": 200,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 10000,
@@ -86,9 +86,9 @@ THETA = {
 
 # Controller with frozen theta estimator
 CONTROLLER = {
-    "hidden_sizes": (512, 512),
-    "n_history": 300,
-    "n_rollout": 1000,
+    "hidden_sizes": (256, 256),
+    "n_history": 200,
+    "n_rollout": 600,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 5000,
@@ -99,9 +99,9 @@ CONTROLLER = {
 
 # Oracle controller (upper bound for two-model)
 ORACLE = {
-    "hidden_sizes": (512, 512),
-    "n_history": 300,
-    "n_rollout": 1000,
+    "hidden_sizes": (256, 256),
+    "n_history": 200,
+    "n_rollout": 600,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 5000,

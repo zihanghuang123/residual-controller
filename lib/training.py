@@ -19,12 +19,12 @@ from lib import losses, rollout
 from lib.domain_randomization import apply_theta, sample_theta
 
 
-def load_config(default="double_pendulum/config.py"):
+def load_config(default="plants/double_pendulum/config.py"):
     """Parse --config CLI arg, load the plant config module from the given file path.
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=default,
-                        help="Path to plant config .py file (e.g. double_pendulum/config.py)")
+                        help="Path to plant config .py file (e.g. plants/double_pendulum/config.py)")
     args = parser.parse_args()
 
     config_path = Path(args.config).resolve()

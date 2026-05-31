@@ -1,6 +1,6 @@
-"""Medium triple-pendulum config: 256x256, w=200, H=600.
+"""Big six-pendulum config: 512x512, w=300, H=1000.
 
-One step up from config.py (writeup baseline) along both axes — capacity + horizon doubled.
+Compound-scaled up further from config1.py.
 """
 
 from pathlib import Path
@@ -10,17 +10,17 @@ import numpy as np
 
 # Paths
 HERE = Path(__file__).parent
-PROJECT_ROOT = HERE.parent
+PROJECT_ROOT = HERE.parent.parent  # repo root (plants/<plant>/)
 MODEL_PATH = HERE / "model.xml"
 PLANT_NAME = HERE.name
 OUTPUT_DIR = PROJECT_ROOT / "outputs" / PLANT_NAME / Path(__file__).stem
 
 
 # Plant dimensions
-NQ = 3
-NV = 3
-NU = 3
-N_LINKS = 3
+NQ = 6
+NV = 6
+NU = 6
+N_LINKS = 6
 
 
 # Trajectory horizon
@@ -29,16 +29,19 @@ SIM_DURATION = 5.0
 N_STEPS = int(SIM_DURATION / TIMESTEP)
 
 
-# PD gains (per-joint, applied in closed-loop residual rollout)
-# Tapered with depth: deeper joints carry less mass below them and need less torque.
-KP = np.array([40.0, 10.0, 2.5])
-KD = np.array([2.0, 0.5, 0.1])
+# PD gains (per-joint). Tapered with depth: each level is 1/4 of the one above.
+KP = np.array([100.0, 25.0, 6.25, 1.56, 0.39, 0.1])
+KD = np.array([5.0, 1.25, 0.31, 0.08, 0.02, 0.005])
 
 
-# Library of (x0, xf) pairs
+# Library of (x0, xf) pairs. Root joint swings up to pi; the rest target 0.
 N_TRAJECTORIES = 200
-INITIAL_QPOS_RANGE = (np.array([-0.5, -0.5, -0.5]), np.array([0.5, 0.5, 0.5]))
-TARGET_QPOS_RANGE = (np.array([np.pi - 0.5, -0.5, -0.5]), np.array([np.pi + 0.5, 0.5, 0.5]))
+INITIAL_QPOS_RANGE = (np.full(N_LINKS, -0.5), np.full(N_LINKS, 0.5))
+_TARGET_LO = np.full(N_LINKS, -0.5)
+_TARGET_HI = np.full(N_LINKS, 0.5)
+_TARGET_LO[0] = np.pi - 0.5
+_TARGET_HI[0] = np.pi + 0.5
+TARGET_QPOS_RANGE = (_TARGET_LO, _TARGET_HI)
 TRAJECTORY_SAMPLE_SEED = 42
 
 
@@ -59,9 +62,9 @@ THETA_DIM = 3 * N_LINKS
 
 # Pure MLP residual
 PURE = {
-    "hidden_sizes": (256, 256),
-    "n_history": 200,
-    "n_rollout": 600,
+    "hidden_sizes": (512, 512),
+    "n_history": 300,
+    "n_rollout": 1000,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 5000,
@@ -73,7 +76,7 @@ PURE = {
 # Theta estimator
 THETA = {
     "hidden_sizes": (512, 512),
-    "n_history": 200,
+    "n_history": 300,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 10000,
@@ -83,9 +86,9 @@ THETA = {
 
 # Controller with frozen theta estimator
 CONTROLLER = {
-    "hidden_sizes": (256, 256),
-    "n_history": 200,
-    "n_rollout": 600,
+    "hidden_sizes": (512, 512),
+    "n_history": 300,
+    "n_rollout": 1000,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 5000,
@@ -96,9 +99,9 @@ CONTROLLER = {
 
 # Oracle controller (upper bound for two-model)
 ORACLE = {
-    "hidden_sizes": (256, 256),
-    "n_history": 200,
-    "n_rollout": 600,
+    "hidden_sizes": (512, 512),
+    "n_history": 300,
+    "n_rollout": 1000,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 5000,

@@ -1,9 +1,4 @@
-"""Plant-specific config for the seven-link pendulum.
-
-Same structure as double_/triple_pendulum, NQ/NV/NU=7. KP/KD taper with joint
-depth (factor 4 per level, matching the 2-/3-link convention). The deep-joint
-gains and SIM_DURATION are extrapolated and likely need retuning -- validate the
-references with solve_trajectory.py + plot_trajectories.py before training.
+"""Plant-specific config for the triple pendulum.
 """
 
 from pathlib import Path
@@ -13,38 +8,35 @@ import numpy as np
 
 # Paths
 HERE = Path(__file__).parent
-PROJECT_ROOT = HERE.parent
+PROJECT_ROOT = HERE.parent.parent  # repo root (plants/<plant>/)
 MODEL_PATH = HERE / "model.xml"
 PLANT_NAME = HERE.name
 OUTPUT_DIR = PROJECT_ROOT / "outputs" / PLANT_NAME / Path(__file__).stem
 
 
 # Plant dimensions
-NQ = 7
-NV = 7
-NU = 7
-N_LINKS = 7
+NQ = 3
+NV = 3
+NU = 3
+N_LINKS = 3
 
 
 # Trajectory horizon
 TIMESTEP = 0.002
-SIM_DURATION = 9.0
+SIM_DURATION = 5.0
 N_STEPS = int(SIM_DURATION / TIMESTEP)
 
 
-# PD gains (per-joint). Tapered with depth: each level is 1/4 of the one above.
-KP = np.array([120.0, 30.0, 7.5, 1.88, 0.47, 0.12, 0.03])
-KD = np.array([6.0, 1.5, 0.38, 0.09, 0.02, 0.006, 0.0015])
+# PD gains (per-joint, applied in closed-loop residual rollout)
+# Tapered with depth: deeper joints carry less mass below them and need less torque.
+KP = np.array([40.0, 10.0, 2.5])
+KD = np.array([2.0, 0.5, 0.1])
 
 
-# Library of (x0, xf) pairs. Root joint swings up to pi; the rest target 0.
+# Library of (x0, xf) pairs
 N_TRAJECTORIES = 200
-INITIAL_QPOS_RANGE = (np.full(N_LINKS, -0.5), np.full(N_LINKS, 0.5))
-_TARGET_LO = np.full(N_LINKS, -0.5)
-_TARGET_HI = np.full(N_LINKS, 0.5)
-_TARGET_LO[0] = np.pi - 0.5
-_TARGET_HI[0] = np.pi + 0.5
-TARGET_QPOS_RANGE = (_TARGET_LO, _TARGET_HI)
+INITIAL_QPOS_RANGE = (np.array([-0.5, -0.5, -0.5]), np.array([0.5, 0.5, 0.5]))
+TARGET_QPOS_RANGE = (np.array([np.pi - 0.5, -0.5, -0.5]), np.array([np.pi + 0.5, 0.5, 0.5]))
 TRAJECTORY_SAMPLE_SEED = 42
 
 

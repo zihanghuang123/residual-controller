@@ -1,4 +1,4 @@
-"""Big four-pendulum config: 512x512, w=300, H=1000.
+"""Big seven-pendulum config: 512x512, w=300, H=1000.
 
 Compound-scaled up further from config1.py.
 """
@@ -10,28 +10,28 @@ import numpy as np
 
 # Paths
 HERE = Path(__file__).parent
-PROJECT_ROOT = HERE.parent
+PROJECT_ROOT = HERE.parent.parent  # repo root (plants/<plant>/)
 MODEL_PATH = HERE / "model.xml"
 PLANT_NAME = HERE.name
 OUTPUT_DIR = PROJECT_ROOT / "outputs" / PLANT_NAME / Path(__file__).stem
 
 
 # Plant dimensions
-NQ = 4
-NV = 4
-NU = 4
-N_LINKS = 4
+NQ = 7
+NV = 7
+NU = 7
+N_LINKS = 7
 
 
 # Trajectory horizon
 TIMESTEP = 0.002
-SIM_DURATION = 6.0
+SIM_DURATION = 5.0
 N_STEPS = int(SIM_DURATION / TIMESTEP)
 
 
 # PD gains (per-joint). Tapered with depth: each level is 1/4 of the one above.
-KP = np.array([60.0, 15.0, 3.75, 0.94])
-KD = np.array([3.0, 0.75, 0.19, 0.05])
+KP = np.array([120.0, 30.0, 7.5, 1.88, 0.47, 0.12, 0.03])
+KD = np.array([6.0, 1.5, 0.38, 0.09, 0.02, 0.006, 0.0015])
 
 
 # Library of (x0, xf) pairs. Root joint swings up to pi; the rest target 0.
