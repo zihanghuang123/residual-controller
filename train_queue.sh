@@ -19,12 +19,11 @@ mkdir -p logs
 # Each line: "script  config_path  tag"  (tag is used for log filename + status messages).
 # Edit this list to change what runs and in what order.
 JOBS=(
-    "train/train_pure.py   triple_pendulum/config.py   pure_small"
-    "train/train_oracle.py triple_pendulum/config.py   oracle_small"
-    "train/train_pure.py   triple_pendulum/config1.py  pure_med"
-    "train/train_oracle.py triple_pendulum/config1.py  oracle_med"
-    "train/train_pure.py   triple_pendulum/config2.py  pure_big"
-    "train/train_oracle.py triple_pendulum/config2.py  oracle_big"
+    "train/solve_trajectory.py plants/triple_pendulum/config.py traj_triple"
+    "train/solve_trajectory.py plants/four_pendulum/config.py   traj_four"
+    "train/solve_trajectory.py plants/five_pendulum/config.py   traj_five"
+    "train/solve_trajectory.py plants/six_pendulum/config.py    traj_six"
+    "train/solve_trajectory.py plants/seven_pendulum/config.py  traj_seven"
 )
 
 echo "=== Queue started: $(date) ==="
