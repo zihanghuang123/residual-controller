@@ -134,8 +134,13 @@ def training_loop(
     key, params, opt_state, train_step,
     batch_size, n_iterations, n_traj, t0_max,
     log_every=50,
+    eval_callback=None,
+    eval_every=None,
 ):
-    """Random-(idx, t0, theta) sampling loop. Returns (params, loss_history)."""
+    """Random-(idx, t0, theta) sampling loop. Returns (params, loss_history).
+
+    If eval_callback is provided, it's called as eval_callback(params, iteration) every eval_every iterations
+    """
     loss_history = np.zeros(n_iterations)
     for i in range(n_iterations):
         key, idx_key, t0_key, *theta_keys = jax.random.split(key, batch_size + 3)
@@ -148,6 +153,9 @@ def training_loop(
 
         if i % log_every == 0 or i == n_iterations - 1:
             print(f"  iter {i:5d}  loss = {float(loss):.6f}")
+
+        if eval_callback is not None and eval_every is not None and (i + 1) % eval_every == 0:
+            eval_callback(params, i + 1)
     return params, loss_history
 
 
@@ -166,10 +174,14 @@ def train_mlp_controller(
     params, build_controller_fn,
     traj_path: Path, params_path: Path, loss_path: Path,
     key,
+    eval_callback=None,
+    eval_every=None,
 ):
     """End-to-end MLP residual controller training.
 
-    Caller pre-builds the network, initializes params, and constructs build_controller_fn (binding the network and any auxiliaries like a frozen theta estimator). Everything else — data, MJX model, optimizer, loss, train_step, loop, save — happens here.
+    Caller pre-builds the network, initializes params, and constructs build_controller_fn.
+
+    Optional eval_callback(params, iteration) is invoked every eval_every iterations during training.
     """
     print("loading trajectories ...")
     x_refs, u_refs = load_trajectories(traj_path)
@@ -203,6 +215,8 @@ def train_mlp_controller(
         key, params, opt_state, train_step,
         batch_size=batch_size, n_iterations=n_iterations,
         n_traj=n_traj, t0_max=T - H + 1,
+        eval_callback=eval_callback,
+        eval_every=eval_every,
     )
 
     save_results(params, loss_history, params_path, loss_path)

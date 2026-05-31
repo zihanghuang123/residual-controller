@@ -3,6 +3,8 @@
 The make_controller_fn(theta) factory pattern keeps PD / pure / oracle / two-model uniform: pure ignores theta, oracle uses true theta, two-model computes theta_hat from history. The eval_fn samples theta per plant and constructs the rollout controller_fn from it.
 """
 
+import pickle
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -115,5 +117,50 @@ def eval_mlp_residual(cfg, controllers, traj_path, metrics_path, w, name_width=1
         name_width=name_width,
     )
 
-    save_metrics(results, metrics_path)
+    if metrics_path is not None:
+        save_metrics(results, metrics_path)
     return results
+
+
+def make_eval_callback(cfg, make_controllers, target_name, w,
+                       csv_path, best_params_path, traj_path=None):
+    """Build a periodic eval callback for the training loop.
+    """
+    if traj_path is None:
+        traj_path = cfg.OUTPUT_DIR / "trajectories.npz"
+
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(csv_path, "w") as f:
+        f.write("iter,endpoint_pd,endpoint_target,tracking_rms_target,vrms_target,is_best\n")
+
+    state = {"best": float("inf")}
+
+    def callback(params, iteration):
+        controllers = make_controllers(params)
+        results = eval_mlp_residual(
+            cfg, controllers,
+            traj_path=traj_path, metrics_path=None,
+            w=w,
+        )
+        ep_target = float(results[target_name][0].mean())
+        ep_pd = float(results["pd"][0].mean()) if "pd" in results else float("nan")
+        tr_rms = float(np.sqrt(results[target_name][1]).mean())
+        vr_mean = float(results[target_name][2].mean())
+
+        is_best = ep_target < state["best"]
+        if is_best:
+            state["best"] = ep_target
+            best_params_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(best_params_path, "wb") as f:
+                pickle.dump(params, f)
+
+        with open(csv_path, "a") as f:
+            f.write(f"{iteration},{ep_pd:.6f},{ep_target:.6f},"
+                    f"{tr_rms:.6f},{vr_mean:.6f},{int(is_best)}\n")
+
+        reduction = 100 * (1 - ep_target / ep_pd) if ep_pd > 0 else float("nan")
+        suffix = "  *** BEST ***" if is_best else ""
+        print(f"  [eval iter {iteration:5d}] {target_name}: endpoint={ep_target:.4f}  "
+              f"vs pd {ep_pd:.4f}  ({reduction:.1f}% reduction){suffix}")
+
+    return callback

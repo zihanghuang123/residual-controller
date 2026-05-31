@@ -70,7 +70,7 @@ PURE = {
     "n_rollout": 300,
     "batch_size": 64,
     "lr": 3e-4,
-    "n_iterations": 5000,
+    "n_iterations": 3000,
     "grad_clip_norm": 1.0,
     "alpha_reg": 1e-5,
 }
@@ -82,7 +82,7 @@ THETA = {
     "n_history": 100,
     "batch_size": 64,
     "lr": 3e-4,
-    "n_iterations": 10000,
+    "n_iterations": 3000,
     "grad_clip_norm": 1.0,
 }
 
@@ -94,7 +94,7 @@ CONTROLLER = {
     "n_rollout": 300,
     "batch_size": 64,
     "lr": 3e-4,
-    "n_iterations": 5000,
+    "n_iterations": 3000,
     "grad_clip_norm": 1.0,
     "alpha_reg": 1e-5,
 }
@@ -107,7 +107,7 @@ ORACLE = {
     "n_rollout": 300,
     "batch_size": 64,
     "lr": 3e-4,
-    "n_iterations": 5000,
+    "n_iterations": 3000,
     "grad_clip_norm": 1.0,
     "alpha_reg": 1e-5,
 }

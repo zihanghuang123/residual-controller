@@ -19,11 +19,45 @@ mkdir -p logs
 # Each line: "script  config_path  tag"  (tag is used for log filename + status messages).
 # Edit this list to change what runs and in what order.
 JOBS=(
-    "train/solve_trajectory.py plants/triple_pendulum/config.py traj_triple"
-    "train/solve_trajectory.py plants/four_pendulum/config.py   traj_four"
-    "train/solve_trajectory.py plants/five_pendulum/config.py   traj_five"
-    "train/solve_trajectory.py plants/six_pendulum/config.py    traj_six"
-    "train/solve_trajectory.py plants/seven_pendulum/config.py  traj_seven"
+    # --- triple pendulum (3 links) ---
+    "train/train_pure.py   plants/triple_pendulum/config.py  pure_triple_small"
+    "train/train_oracle.py plants/triple_pendulum/config.py  oracle_triple_small"
+    "train/train_pure.py   plants/triple_pendulum/config1.py pure_triple_medium"
+    "train/train_oracle.py plants/triple_pendulum/config1.py oracle_triple_medium"
+    "train/train_pure.py   plants/triple_pendulum/config2.py pure_triple_large"
+    "train/train_oracle.py plants/triple_pendulum/config2.py oracle_triple_large"
+
+    # --- four pendulum (4 links) ---
+    "train/train_pure.py   plants/four_pendulum/config.py  pure_four_small"
+    "train/train_oracle.py plants/four_pendulum/config.py  oracle_four_small"
+    "train/train_pure.py   plants/four_pendulum/config1.py pure_four_medium"
+    "train/train_oracle.py plants/four_pendulum/config1.py oracle_four_medium"
+    "train/train_pure.py   plants/four_pendulum/config2.py pure_four_large"
+    "train/train_oracle.py plants/four_pendulum/config2.py oracle_four_large"
+
+    # --- five pendulum (5 links) ---
+    "train/train_pure.py   plants/five_pendulum/config.py  pure_five_small"
+    "train/train_oracle.py plants/five_pendulum/config.py  oracle_five_small"
+    "train/train_pure.py   plants/five_pendulum/config1.py pure_five_medium"
+    "train/train_oracle.py plants/five_pendulum/config1.py oracle_five_medium"
+    "train/train_pure.py   plants/five_pendulum/config2.py pure_five_large"
+    "train/train_oracle.py plants/five_pendulum/config2.py oracle_five_large"
+
+    # --- six pendulum (6 links) ---
+    "train/train_pure.py   plants/six_pendulum/config.py  pure_six_small"
+    "train/train_oracle.py plants/six_pendulum/config.py  oracle_six_small"
+    "train/train_pure.py   plants/six_pendulum/config1.py pure_six_medium"
+    "train/train_oracle.py plants/six_pendulum/config1.py oracle_six_medium"
+    "train/train_pure.py   plants/six_pendulum/config2.py pure_six_large"
+    "train/train_oracle.py plants/six_pendulum/config2.py oracle_six_large"
+
+    # --- seven pendulum (7 links) ---
+    "train/train_pure.py   plants/seven_pendulum/config.py  pure_seven_small"
+    "train/train_oracle.py plants/seven_pendulum/config.py  oracle_seven_small"
+    "train/train_pure.py   plants/seven_pendulum/config1.py pure_seven_medium"
+    "train/train_oracle.py plants/seven_pendulum/config1.py oracle_seven_medium"
+    "train/train_pure.py   plants/seven_pendulum/config2.py pure_seven_large"
+    "train/train_oracle.py plants/seven_pendulum/config2.py oracle_seven_large"
 )
 
 echo "=== Queue started: $(date) ==="

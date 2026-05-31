@@ -1,8 +1,11 @@
 """Train pure MLP residual controller via BPTT through MJX under DR.
 
 Random (trajectory, t0, plant) per iteration, BPTT through n_rollout MJX steps, tracking + control regularization loss. No theta information of any kind — the controller sees only the history and the reference window.
+
+Every EVAL_EVERY iterations: runs eval_mlp_residual, appends a row to <output>/pure_eval_log.csv, saves best-endpoint params to <output>/pure_params_best.pkl.
 """
 
+import functools
 import sys
 from pathlib import Path
 
@@ -12,8 +15,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import jax
 import jax.numpy as jnp
 
-from lib import rollout, training
+from lib import evaluation, rollout, training
 from lib.networks import MLPPureController
+
+EVAL_EVERY = 500   # iterations between periodic evals; None disables
 
 
 def init_network(cfg, key):
@@ -41,14 +46,31 @@ def main():
     key, init_key = jax.random.split(key)
     network, params = init_network(cfg, init_key)
 
+    build_pure = make_build_controller_fn(network)
+    pd_factory = lambda _theta: lambda *_: jnp.zeros(cfg.NU)
+
+    def make_controllers(current_params):
+        return {"pd": pd_factory, "pure": functools.partial(build_pure, current_params)}
+
+    eval_callback = evaluation.make_eval_callback(
+        cfg,
+        make_controllers=make_controllers,
+        target_name="pure",
+        w=cfg.PURE["n_history"],
+        csv_path=cfg.OUTPUT_DIR / "pure_eval_log.csv",
+        best_params_path=cfg.OUTPUT_DIR / "pure_params_best.pkl",
+    )
+
     training.train_mlp_controller(
         cfg, cfg.PURE,
         params=params,
-        build_controller_fn=make_build_controller_fn(network),
+        build_controller_fn=build_pure,
         traj_path=cfg.OUTPUT_DIR / "trajectories.npz",
         params_path=cfg.OUTPUT_DIR / "pure_params.pkl",
         loss_path=cfg.OUTPUT_DIR / "pure_loss_history.npy",
         key=key,
+        eval_callback=eval_callback,
+        eval_every=EVAL_EVERY,
     )
 
 
