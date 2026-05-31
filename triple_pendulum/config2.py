@@ -72,7 +72,7 @@ PURE = {
 # Theta estimator
 THETA = {
     "hidden_sizes": (512, 512),
-    "n_history": 200,
+    "n_history": 300,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 10000,
