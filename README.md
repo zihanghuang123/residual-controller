@@ -94,9 +94,8 @@ Outputs land in `cfg.OUTPUT_DIR`, which defaults to `outputs/<plant>/<config_ste
 For long runs (multiple configs × controllers, overnight) use `train_queue.sh`:
 
 ```
-tmux new -s train
-bash train_queue.sh             # runs each job sequentially, logs separately
-# Ctrl+B then D to detach; tmux attach -t train to come back later
+nohup bash train_queue.sh > queue.log 2>&1 &
+disown
 ```
 
 Edit the `JOBS` array at the top of the script to control what runs and in what order. Each job is timestamped and timed; the queue continues even if one job fails.
