@@ -89,6 +89,18 @@ python eval/evaluate_pure_rnn.py
 
 Outputs land in `cfg.OUTPUT_DIR`, which defaults to `outputs/<plant>/<config_stem>/`. Different config files on the same plant (e.g. `config.py` vs `config_big.py`) write to different output directories and can be trained in parallel on the same GPU without collision.
 
+### Sequential training queue
+
+For long runs (multiple configs × controllers, overnight) use `train_queue.sh`:
+
+```
+tmux new -s train
+bash train_queue.sh             # runs each job sequentially, logs separately
+# Ctrl+B then D to detach; tmux attach -t train to come back later
+```
+
+Edit the `JOBS` array at the top of the script to control what runs and in what order. Each job is timestamped and timed; the queue continues even if one job fails.
+
 ## Porting to a different plant
 
 Plant-specific code lives in `<plant>/` directories. To port to a new robot:
