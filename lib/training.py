@@ -137,9 +137,9 @@ def training_loop(
     eval_callback=None,
     eval_every=None,
 ):
-    """Random-(idx, t0, theta) sampling loop. Returns (params, loss_history).
+    """Random-(idx, t0, theta) sampling loop. Returns (params, opt_state, loss_history).
 
-    If eval_callback is provided, it's called as eval_callback(params, iteration) every eval_every iterations
+    If eval_callback is provided, it's called as eval_callback(params, iteration) every eval_every iterations.
     """
     loss_history = np.zeros(n_iterations)
     for i in range(n_iterations):
@@ -156,17 +156,22 @@ def training_loop(
 
         if eval_callback is not None and eval_every is not None and (i + 1) % eval_every == 0:
             eval_callback(params, i + 1)
-    return params, loss_history
+    return params, opt_state, loss_history
 
 
-def save_results(params, loss_history, params_path: Path, loss_path: Path):
-    """Pickle params + numpy-save loss history. Parent directories created as needed."""
+def save_results(params, loss_history, params_path: Path, loss_path: Path,
+                 opt_state=None, opt_state_path: Path = None):
+    """Pickle params + numpy-save loss history. Optionally also pickle opt_state for future resume."""
     params_path.parent.mkdir(parents=True, exist_ok=True)
     with open(params_path, "wb") as f:
         pickle.dump(params, f)
     np.save(loss_path, loss_history)
     print(f"saved {params_path}")
     print(f"saved {loss_path}")
+    if opt_state is not None and opt_state_path is not None:
+        with open(opt_state_path, "wb") as f:
+            pickle.dump(opt_state, f)
+        print(f"saved {opt_state_path}")
 
 
 def train_mlp_controller(
@@ -176,12 +181,13 @@ def train_mlp_controller(
     key,
     eval_callback=None,
     eval_every=None,
+    opt_state_path: Path = None,
 ):
     """End-to-end MLP residual controller training.
 
     Caller pre-builds the network, initializes params, and constructs build_controller_fn.
 
-    Optional eval_callback(params, iteration) is invoked every eval_every iterations during training.
+    Optional eval_callback(params, iteration) is invoked every eval_every iterations during training. opt_state_path enables saving Adam state alongside params for later resume.
     """
     print("loading trajectories ...")
     x_refs, u_refs = load_trajectories(traj_path)
@@ -211,7 +217,7 @@ def train_mlp_controller(
     batch_size = cfg_dict["batch_size"]
     n_iterations = cfg_dict["n_iterations"]
     print(f"training: {n_iterations} iterations, batch={batch_size}, H={H}, w={cfg_dict['n_history']}")
-    params, loss_history = training_loop(
+    params, opt_state, loss_history = training_loop(
         key, params, opt_state, train_step,
         batch_size=batch_size, n_iterations=n_iterations,
         n_traj=n_traj, t0_max=T - H + 1,
@@ -219,5 +225,6 @@ def train_mlp_controller(
         eval_every=eval_every,
     )
 
-    save_results(params, loss_history, params_path, loss_path)
+    save_results(params, loss_history, params_path, loss_path,
+                 opt_state=opt_state, opt_state_path=opt_state_path)
     return params, loss_history

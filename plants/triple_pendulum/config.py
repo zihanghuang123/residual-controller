@@ -57,12 +57,12 @@ THETA_DIM = 3 * N_LINKS
 
 # Pure MLP residual
 PURE = {
-    "hidden_sizes": (128, 128),
-    "n_history": 100,
-    "n_rollout": 300,
+    "hidden_sizes": (1024, 1024),
+    "n_history": 300,
+    "n_rollout": 1500,
     "batch_size": 64,
     "lr": 3e-4,
-    "n_iterations": 3000,
+    "n_iterations": 5000,
     "grad_clip_norm": 1.0,
     "alpha_reg": 1e-5,
 }
@@ -71,22 +71,22 @@ PURE = {
 # Theta estimator
 THETA = {
     "hidden_sizes": (512, 512),
-    "n_history": 100,
+    "n_history": 300,
     "batch_size": 64,
     "lr": 3e-4,
-    "n_iterations": 3000,
+    "n_iterations": 5000,
     "grad_clip_norm": 1.0,
 }
 
 
 # Controller with frozen theta estimator
 CONTROLLER = {
-    "hidden_sizes": (128, 128),
-    "n_history": 100,
-    "n_rollout": 300,
+    "hidden_sizes": (1024, 1024),
+    "n_history": 300,
+    "n_rollout": 1500,
     "batch_size": 64,
     "lr": 3e-4,
-    "n_iterations": 3000,
+    "n_iterations": 5000,
     "grad_clip_norm": 1.0,
     "alpha_reg": 1e-5,
 }
@@ -94,12 +94,12 @@ CONTROLLER = {
 
 # Oracle controller (upper bound for two-model)
 ORACLE = {
-    "hidden_sizes": (128, 128),
-    "n_history": 100,
-    "n_rollout": 300,
+    "hidden_sizes": (1024, 1024),
+    "n_history": 300,
+    "n_rollout": 1500,
     "batch_size": 64,
     "lr": 3e-4,
-    "n_iterations": 3000,
+    "n_iterations": 5000,
     "grad_clip_norm": 1.0,
     "alpha_reg": 1e-5,
 }

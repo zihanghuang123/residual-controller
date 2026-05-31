@@ -71,6 +71,7 @@ def main():
         traj_path=cfg.OUTPUT_DIR / "trajectories.npz",
         params_path=cfg.OUTPUT_DIR / "oracle_params.pkl",
         loss_path=cfg.OUTPUT_DIR / "oracle_loss_history.npy",
+        opt_state_path=cfg.OUTPUT_DIR / "oracle_opt_state.pkl",
         key=key,
         eval_callback=eval_callback,
         eval_every=EVAL_EVERY,
