@@ -57,7 +57,7 @@ THETA_DIM = 3 * N_LINKS
 
 # Pure MLP residual
 PURE = {
-    "hidden_sizes": (1024, 1024),
+    "hidden_sizes": (512, 512),
     "n_history": 300,
     "n_rollout": 1500,
     "batch_size": 64,
@@ -81,7 +81,7 @@ THETA = {
 
 # Controller with frozen theta estimator
 CONTROLLER = {
-    "hidden_sizes": (1024, 1024),
+    "hidden_sizes": (512, 512),
     "n_history": 300,
     "n_rollout": 1500,
     "batch_size": 64,
@@ -94,7 +94,7 @@ CONTROLLER = {
 
 # Oracle controller (upper bound for two-model)
 ORACLE = {
-    "hidden_sizes": (1024, 1024),
+    "hidden_sizes": (512, 512),
     "n_history": 300,
     "n_rollout": 1500,
     "batch_size": 64,
