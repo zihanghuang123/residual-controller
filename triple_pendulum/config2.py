@@ -1,6 +1,6 @@
-"""Plant-specific config for the triple pendulum.
+"""Big triple-pendulum config: 512x512, w=300, H=1000.
 
-Sibling of double_pendulum/config.py. Structure is identical; what changes is plant dimensions, per-joint gains, and the qpos ranges. PD gains decrease with joint depth — deeper joints carry less effective inertia, so they need smaller gains to avoid oscillation.
+Compound-scaled up further from config1.py. H=1000 covers ~40% of the T=2500 trajectory per window, partially closing the train-vs-eval horizon gap. Memory profile is right at the edge of MEM_FRACTION=0.15 (~7 GB); drop batch to 32 if it OOMs.
 """
 
 from pathlib import Path
@@ -30,7 +30,6 @@ N_STEPS = int(SIM_DURATION / TIMESTEP)
 
 
 # PD gains (per-joint, applied in closed-loop residual rollout)
-# Tapered with depth: deeper joints carry less mass below them and need less torque.
 KP = np.array([40.0, 10.0, 2.5])
 KD = np.array([2.0, 0.5, 0.1])
 
@@ -59,9 +58,9 @@ THETA_DIM = 3 * N_LINKS
 
 # Pure MLP residual
 PURE = {
-    "hidden_sizes": (128, 128),
-    "n_history": 100,
-    "n_rollout": 300,
+    "hidden_sizes": (512, 512),
+    "n_history": 300,
+    "n_rollout": 1000,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 5000,
@@ -83,9 +82,9 @@ THETA = {
 
 # Controller with frozen theta estimator
 CONTROLLER = {
-    "hidden_sizes": (128, 128),
-    "n_history": 100,
-    "n_rollout": 300,
+    "hidden_sizes": (512, 512),
+    "n_history": 300,
+    "n_rollout": 1000,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 5000,
@@ -96,9 +95,9 @@ CONTROLLER = {
 
 # Oracle controller (upper bound for two-model)
 ORACLE = {
-    "hidden_sizes": (128, 128),
-    "n_history": 100,
-    "n_rollout": 300,
+    "hidden_sizes": (512, 512),
+    "n_history": 300,
+    "n_rollout": 1000,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 5000,

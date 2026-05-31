@@ -1,6 +1,6 @@
-"""Plant-specific config for the triple pendulum.
+"""Medium triple-pendulum config: 256x256, w=200, H=600.
 
-Sibling of double_pendulum/config.py. Structure is identical; what changes is plant dimensions, per-joint gains, and the qpos ranges. PD gains decrease with joint depth — deeper joints carry less effective inertia, so they need smaller gains to avoid oscillation.
+One step up from config.py (writeup baseline) along both axes — capacity + horizon doubled.
 """
 
 from pathlib import Path
@@ -59,9 +59,9 @@ THETA_DIM = 3 * N_LINKS
 
 # Pure MLP residual
 PURE = {
-    "hidden_sizes": (128, 128),
-    "n_history": 100,
-    "n_rollout": 300,
+    "hidden_sizes": (256, 256),
+    "n_history": 200,
+    "n_rollout": 600,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 5000,
@@ -83,9 +83,9 @@ THETA = {
 
 # Controller with frozen theta estimator
 CONTROLLER = {
-    "hidden_sizes": (128, 128),
-    "n_history": 100,
-    "n_rollout": 300,
+    "hidden_sizes": (256, 256),
+    "n_history": 200,
+    "n_rollout": 600,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 5000,
@@ -96,9 +96,9 @@ CONTROLLER = {
 
 # Oracle controller (upper bound for two-model)
 ORACLE = {
-    "hidden_sizes": (128, 128),
-    "n_history": 100,
-    "n_rollout": 300,
+    "hidden_sizes": (256, 256),
+    "n_history": 200,
+    "n_rollout": 600,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 5000,

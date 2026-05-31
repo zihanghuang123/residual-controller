@@ -1,6 +1,4 @@
 """Plant-specific config for the triple pendulum.
-
-Sibling of double_pendulum/config.py. Structure is identical; what changes is plant dimensions, per-joint gains, and the qpos ranges. PD gains decrease with joint depth — deeper joints carry less effective inertia, so they need smaller gains to avoid oscillation.
 """
 
 from pathlib import Path

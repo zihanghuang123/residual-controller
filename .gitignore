@@ -10,6 +10,7 @@ venv/
 env/
 
 outputs/
+logs/
 
 .DS_Store
 Thumbs.db
