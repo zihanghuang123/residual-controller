@@ -33,10 +33,11 @@ KP = np.array([40.0, 10.0, 2.5])
 KD = np.array([2.0, 0.5, 0.1])
 
 
-# Library of (x0, xf) pairs
 N_TRAJECTORIES = 200
-INITIAL_QPOS_RANGE = (np.array([-0.5, -0.5, -0.5]), np.array([0.5, 0.5, 0.5]))
-TARGET_QPOS_RANGE = (np.array([np.pi - 0.5, -0.5, -0.5]), np.array([np.pi + 0.5, 0.5, 0.5]))
+INITIAL_QPOS_RANGE = (np.full(N_LINKS, -np.pi), np.full(N_LINKS, np.pi))
+TARGET_QPOS_RANGE = (np.full(N_LINKS, -np.pi), np.full(N_LINKS, np.pi))
+INITIAL_QVEL_RANGE = (np.full(N_LINKS, -3.0), np.full(N_LINKS, 3.0))
+TARGET_QVEL_RANGE = (np.full(N_LINKS, -3.0), np.full(N_LINKS, 3.0))
 TRAJECTORY_SAMPLE_SEED = 42
 
 

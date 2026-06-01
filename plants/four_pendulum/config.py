@@ -37,14 +37,11 @@ KP = np.array([60.0, 15.0, 3.75, 0.94])
 KD = np.array([3.0, 0.75, 0.19, 0.05])
 
 
-# Library of (x0, xf) pairs. Root joint swings up to pi; the rest target 0.
 N_TRAJECTORIES = 200
-INITIAL_QPOS_RANGE = (np.full(N_LINKS, -0.5), np.full(N_LINKS, 0.5))
-_TARGET_LO = np.full(N_LINKS, -0.5)
-_TARGET_HI = np.full(N_LINKS, 0.5)
-_TARGET_LO[0] = np.pi - 0.5
-_TARGET_HI[0] = np.pi + 0.5
-TARGET_QPOS_RANGE = (_TARGET_LO, _TARGET_HI)
+INITIAL_QPOS_RANGE = (np.full(N_LINKS, -np.pi), np.full(N_LINKS, np.pi))
+TARGET_QPOS_RANGE = (np.full(N_LINKS, -np.pi), np.full(N_LINKS, np.pi))
+INITIAL_QVEL_RANGE = (np.full(N_LINKS, -3.0), np.full(N_LINKS, 3.0))
+TARGET_QVEL_RANGE = (np.full(N_LINKS, -3.0), np.full(N_LINKS, 3.0))
 TRAJECTORY_SAMPLE_SEED = 42
 
 
