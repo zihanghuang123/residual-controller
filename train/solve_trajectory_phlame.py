@@ -26,7 +26,7 @@ S_MAX = 10
 ABS_TOL = 1e-10
 REL_TOL = 1e-10
 METHOD_NAME = "cvode"
-MAX_STEPS = 1e2
+MAX_STEPS = 1e4
 NS_POINTS = int(1e2)
 TIMEOUT_SEC = 60
 
@@ -107,7 +107,7 @@ def generate_matched_urdf(n_links: int, name: str) -> str:
 
 def solve_one_phlame(N: int, x_init: np.ndarray, x_target: np.ndarray,
                      fp_urdf: str, dt: float, run_name: str):
-    """Return (q, qd, qdd, t_solve) with shapes (N, T+1) for q/qd/qdd."""
+    """Return (q, qd, qdd, t_solve) with shapes (T+1, N) for q/qd/qdd."""
     j_type = (2 * np.ones((N, 1))).astype(np.double, order='F')
     X0 = np.hstack([x_init[:N], x_init[N:]]).reshape(-1, 1).astype(np.double, order='F')
     Xf = np.hstack([x_target[:N], x_target[N:]]).reshape(-1, 1).astype(np.double, order='F')
@@ -167,8 +167,8 @@ def main() -> None:
                 dt=cfg.TIMESTEP,
                 run_name=f"{cfg.PLANT_NAME}_traj_{i:03d}",
             )
-            x_refs[i, :, :N] = q.T
-            x_refs[i, :, N:] = qd.T
+            x_refs[i, :, :N] = q
+            x_refs[i, :, N:] = qd
             converged_flags[i] = True
             solve_times[i] = t_solve
             print(f"  traj {i+1:3d}/{cfg.N_TRAJECTORIES}  OK  ({t_solve:.2f}s)")
