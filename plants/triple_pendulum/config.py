@@ -23,7 +23,7 @@ N_LINKS = 4
 
 # Trajectory horizon
 TIMESTEP = 0.002
-SIM_DURATION = 5.0
+SIM_DURATION = 2.0
 N_STEPS = int(SIM_DURATION / TIMESTEP)
 
 
