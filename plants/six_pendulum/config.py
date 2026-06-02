@@ -37,7 +37,7 @@ KP = np.array([100.0, 25.0, 6.25, 1.56, 0.39, 0.1])
 KD = np.array([5.0, 1.25, 0.31, 0.08, 0.02, 0.005])
 
 
-N_TRAJECTORIES = 200
+N_TRAJECTORIES = 2000
 INITIAL_QPOS_RANGE = (np.full(N_LINKS, -np.pi), np.full(N_LINKS, np.pi))
 TARGET_QPOS_RANGE = (np.full(N_LINKS, -np.pi), np.full(N_LINKS, np.pi))
 INITIAL_QVEL_RANGE = (np.full(N_LINKS, -3.0), np.full(N_LINKS, 3.0))
