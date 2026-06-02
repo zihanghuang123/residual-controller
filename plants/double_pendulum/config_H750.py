@@ -62,7 +62,7 @@ THETA_DIM = 3 * N_LINKS
 PURE = {
     "hidden_sizes": (128, 128),
     "n_history": 100,        # w
-    "n_rollout": 300,       # H (BPTT window)
+    "n_rollout": 750,       # H (BPTT window)
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 3000,
@@ -90,7 +90,7 @@ THETA = {
 CONTROLLER = {
     "hidden_sizes": (128, 128),
     "n_history": 100,
-    "n_rollout": 300,
+    "n_rollout": 750,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 3000,
@@ -105,7 +105,7 @@ CONTROLLER = {
 ORACLE = {
     "hidden_sizes": (128, 128),
     "n_history": 100,
-    "n_rollout": 300,
+    "n_rollout": 750,
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 3000,
@@ -119,7 +119,7 @@ ORACLE = {
 # Output:          v in R^NU
 PURE_RNN = {
     "hidden_sizes": (128, 128),  
-    "n_rollout": 300,             
+    "n_rollout": 750,             
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 3000,
@@ -133,7 +133,7 @@ PURE_RNN = {
 # Output:          theta_estimate in R^THETA_DIM
 THETA_RNN = {
     "hidden_sizes": (128, 128),  
-    "n_rollout": 300,     
+    "n_rollout": 750,     
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 3000,
@@ -146,7 +146,7 @@ THETA_RNN = {
 # Output:          v in R^NU
 CONTROLLER_RNN = {
     "hidden_sizes": (128, 128),  
-    "n_rollout": 300,         
+    "n_rollout": 750,         
     "batch_size": 64,
     "lr": 3e-4,
     "n_iterations": 3000,
