@@ -18,7 +18,7 @@ OUTPUT_DIR = PROJECT_ROOT / "outputs" / PLANT_NAME / Path(__file__).stem
 NQ = 3
 NV = 3
 NU = 3
-N_LINKS = 4
+N_LINKS = 3
 
 
 # Trajectory horizon
