@@ -68,6 +68,8 @@ def main():
     opt_state = optimizer.init(params)
 
     t_min, t_max = w, T - w - 1
+    kp = jnp.asarray(cfg.KP)
+    kd = jnp.asarray(cfg.KD)
 
     def build_example(traj_idx, theta_idx, t):
         x_hist_full = jax.lax.dynamic_slice(x_refs[traj_idx], (t - w, 0), (w + 1, 2 * nq))
@@ -79,12 +81,15 @@ def main():
         net_in = rollout.make_network_input(
             x_hist_full, u_hist, x_ref_window, u_ref_window,
         )
-        return net_in, labels[traj_idx, theta_idx, t]
+        x_curr = x_hist_full[-1]
+        x_ref_t = x_ref_window[0]
+        return net_in, labels[traj_idx, theta_idx, t], x_curr, x_ref_t
 
     def per_example_loss(params, traj_idx, theta_idx, t):
-        net_in, label = build_example(traj_idx, theta_idx, t)
+        net_in, label, x_curr, x_ref_t = build_example(traj_idx, theta_idx, t)
         pred = network.apply(params, net_in)
-        return jnp.mean((pred - label) ** 2)
+        pd = kp * (x_ref_t[:nq] - x_curr[:nq]) + kd * (x_ref_t[nq:] - x_curr[nq:])
+        return jnp.mean((pred + pd - label) ** 2)
 
     batched_loss = jax.vmap(per_example_loss, in_axes=(None, 0, 0, 0))
 
