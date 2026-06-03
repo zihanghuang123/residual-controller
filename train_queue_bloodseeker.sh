@@ -11,6 +11,8 @@ set -uo pipefail
 
 mkdir -p logs
 
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.95
+
 JOBS=(
     "train/solve_trajectory.py        plants/six_pendulum/config.py  solve_six"
     "train/build_supervised_dataset.py plants/six_pendulum/config.py  build_supervised_six"
