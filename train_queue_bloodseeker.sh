@@ -1,57 +1,67 @@
 #!/bin/bash
-# train_queue_bloodseeker.sh — run jobs sequentially, surviving disconnect.
+# train_queue_bloodseeker.sh — H-sweep, slots B+C on bloodseeker (2 GPUs).
+#
+# Slot B (GPU 0): five_H2500 + four_H1000  (~7.4 hr)
+# Slot C (GPU 1): six_H2000 + triple_H1500 + triple_H500  (~8.0 hr)
 #
 # Usage:
-#   tmux new -s train
+#   tmux new -s sweep
 #   bash train_queue_bloodseeker.sh
-#   Ctrl+B then D
-#   tmux attach -t train
+#   Ctrl+B then D   (detach)
+#   tmux attach -t sweep
 
 set -uo pipefail
-
 mkdir -p logs
 
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.95
+run_track() {
+    local gpu=$1
+    shift
+    local jobs=("$@")
+    local n=${#jobs[@]}
+    local i=0
+    for job in "${jobs[@]}"; do
+        read -r script config tag <<< "$job"
+        local log="logs/${tag}.log"
+        i=$((i + 1))
+        echo "[GPU $gpu] [$(date +%H:%M:%S)] $i/$n starting $tag"
+        local start=$(date +%s)
+        CUDA_VISIBLE_DEVICES=$gpu PYTHONUNBUFFERED=1 XLA_PYTHON_CLIENT_MEM_FRACTION=0.95 \
+            python "$script" --config "$config" > "$log" 2>&1
+        local status=$?
+        local elapsed=$(( $(date +%s) - start ))
+        local mm=$((elapsed / 60))
+        local ss=$((elapsed % 60))
+        if [ $status -eq 0 ]; then
+            echo "[GPU $gpu] [$(date +%H:%M:%S)] done $tag in ${mm}m${ss}s"
+        else
+            echo "[GPU $gpu] [$(date +%H:%M:%S)] FAILED $tag exit $status after ${mm}m${ss}s"
+        fi
+    done
+}
 
-JOBS=(
-    "train/solve_trajectory.py        plants/six_pendulum/config.py  solve_six"
-    "train/build_supervised_dataset.py plants/six_pendulum/config.py  build_supervised_six"
-    "eval/plot_residual_check.py      plants/six_pendulum/config.py  validate_dataset_six"
+# Slot B — GPU 0
+SLOT_B=(
+    "train/train_supervised.py        plants/six_pendulum/config1.py  train_supervised_six_1"
+    "train/train_pure.py              plants/six_pendulum/config1.py  train_pure_six_1"
+)
+
+# Slot C — GPU 1
+SLOT_C=(
     "train/train_supervised.py        plants/six_pendulum/config.py  train_supervised_six"
     "train/train_pure.py              plants/six_pendulum/config.py  train_pure_six"
 )
 
-echo "=== Queue started: $(date) ==="
-echo "${#JOBS[@]} jobs to run sequentially"
-echo
-
+echo "=== bloodseeker queue started: $(date) ==="
 total_start=$(date +%s)
 
-for i in "${!JOBS[@]}"; do
-    read -r script config tag <<< "${JOBS[$i]}"
-    log="logs/${tag}.log"
-    n=$((i + 1))
+run_track 0 "${SLOT_B[@]}" &
+pid_b=$!
+run_track 1 "${SLOT_C[@]}" &
+pid_c=$!
 
-    echo "----------------------------------------"
-    echo "[$(date +%H:%M:%S)] Job $n/${#JOBS[@]}: $tag"
-    echo "  cmd: python $script --config $config"
-    echo "  log: $log"
-
-    start=$(date +%s)
-    PYTHONUNBUFFERED=1 python "$script" --config "$config" > "$log" 2>&1
-    status=$?
-    elapsed=$(( $(date +%s) - start ))
-    mm=$((elapsed / 60))
-    ss=$((elapsed % 60))
-
-    if [ $status -eq 0 ]; then
-        echo "[$(date +%H:%M:%S)] done in ${mm}m${ss}s"
-    else
-        echo "[$(date +%H:%M:%S)] FAILED (exit $status) after ${mm}m${ss}s — continuing"
-    fi
-done
+wait $pid_b $pid_c
 
 total_elapsed=$(( $(date +%s) - total_start ))
-total_mm=$((total_elapsed / 60))
-echo
-echo "=== Queue finished: $(date) (total ${total_mm}m) ==="
+total_h=$((total_elapsed / 3600))
+total_m=$(((total_elapsed % 3600) / 60))
+echo "=== bloodseeker queue finished: $(date) (total ${total_h}h${total_m}m) ==="
