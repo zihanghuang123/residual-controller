@@ -71,7 +71,7 @@ def main():
     kp = jnp.asarray(cfg.KP)
     kd = jnp.asarray(cfg.KD)
 
-    def build_example(traj_idx, theta_idx, t):
+    def build_example(x_refs, u_refs, labels, traj_idx, theta_idx, t):
         x_hist_full = jax.lax.dynamic_slice(x_refs[traj_idx], (t - w, 0), (w + 1, 2 * nq))
         u_nom_hist = jax.lax.dynamic_slice(u_refs[traj_idx], (t - w, 0), (w, nu))
         u_resid_hist = jax.lax.dynamic_slice(labels[traj_idx, theta_idx], (t - w, 0), (w, nu))
@@ -85,22 +85,25 @@ def main():
         x_ref_t = x_ref_window[0]
         return net_in, labels[traj_idx, theta_idx, t], x_curr, x_ref_t
 
-    def per_example_loss(params, traj_idx, theta_idx, t):
-        net_in, label, x_curr, x_ref_t = build_example(traj_idx, theta_idx, t)
+    def per_example_loss(params, x_refs, u_refs, labels, traj_idx, theta_idx, t):
+        net_in, label, x_curr, x_ref_t = build_example(x_refs, u_refs, labels, traj_idx, theta_idx, t)
         pred = network.apply(params, net_in)
         pd = kp * (x_ref_t[:nq] - x_curr[:nq]) + kd * (x_ref_t[nq:] - x_curr[nq:])
         return jnp.mean((pred + pd - label) ** 2)
 
-    batched_loss = jax.vmap(per_example_loss, in_axes=(None, 0, 0, 0))
+    # Dataset arrays are mapped over the batch axis only (None) and passed as args, not
+    # captured as closures -- otherwise XLA bakes the ~6GB dataset into the executable as
+    # constants and OOMs the host at compile time.
+    batched_loss = jax.vmap(per_example_loss, in_axes=(None, None, None, None, 0, 0, 0))
 
-    def loss_fn(params, traj_idxs, theta_idxs, ts):
-        return jnp.mean(batched_loss(params, traj_idxs, theta_idxs, ts))
+    def loss_fn(params, x_refs, u_refs, labels, traj_idxs, theta_idxs, ts):
+        return jnp.mean(batched_loss(params, x_refs, u_refs, labels, traj_idxs, theta_idxs, ts))
 
     grad_fn = jax.value_and_grad(loss_fn)
 
     @jax.jit
-    def train_step(params, opt_state, traj_idxs, theta_idxs, ts):
-        loss, grads = grad_fn(params, traj_idxs, theta_idxs, ts)
+    def train_step(params, opt_state, x_refs, u_refs, labels, traj_idxs, theta_idxs, ts):
+        loss, grads = grad_fn(params, x_refs, u_refs, labels, traj_idxs, theta_idxs, ts)
         updates, opt_state = optimizer.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
         return params, opt_state, loss
@@ -113,7 +116,8 @@ def main():
         theta_idxs = jax.random.randint(k_theta, (batch_size,), 0, M)
         ts = jax.random.randint(k_t, (batch_size,), t_min, t_max + 1)
 
-        params, opt_state, loss = train_step(params, opt_state, traj_idxs, theta_idxs, ts)
+        params, opt_state, loss = train_step(
+            params, opt_state, x_refs, u_refs, labels, traj_idxs, theta_idxs, ts)
         loss_history[i] = float(loss)
 
         if (i + 1) % args.log_every == 0:
