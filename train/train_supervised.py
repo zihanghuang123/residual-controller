@@ -78,7 +78,9 @@ def main():
 
     def build_example(traj_idx, theta_idx, t):
         x_hist_full = jax.lax.dynamic_slice(x_refs[traj_idx], (t - w, 0), (w + 1, 2 * nq))
-        u_hist = jax.lax.dynamic_slice(u_refs[traj_idx], (t - w, 0), (w, nu))
+        u_nom_hist = jax.lax.dynamic_slice(u_refs[traj_idx], (t - w, 0), (w, nu))
+        u_resid_hist = jax.lax.dynamic_slice(labels[traj_idx, theta_idx], (t - w, 0), (w, nu))
+        u_hist = u_nom_hist + u_resid_hist
         x_ref_window = jax.lax.dynamic_slice(x_refs[traj_idx], (t, 0), (w + 1, 2 * nq))
         u_ref_window = jax.lax.dynamic_slice(u_refs[traj_idx], (t, 0), (w + 1, nu))
         theta = thetas[theta_idx] if args.oracle else None
