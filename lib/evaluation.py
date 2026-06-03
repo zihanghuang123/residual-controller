@@ -13,13 +13,12 @@ from lib import losses, rollout, training
 from lib.domain_randomization import apply_theta, sample_theta
 
 
-def make_eval_fn(cfg, mjx_model_nominal, nominal_body_mass, x_refs, u_refs, w, make_controller_fn):
-    """Vmappable eval_fn(theta_key, idx) -> (endpoint, tracking_mse, vrms).
-    """
+def make_eval_fn(cfg, mjx_model_nominal, nominal_body_mass, x_refs, u_refs, w, make_controller_fn, use_pd=True):
+    """Vmappable eval_fn(theta_key, idx) -> (endpoint, tracking_mse, vrms)."""
     T = x_refs.shape[1] - 1
     nq = cfg.NQ
-    kp = jnp.asarray(cfg.KP)
-    kd = jnp.asarray(cfg.KD)
+    kp = jnp.asarray(cfg.KP) if use_pd else jnp.zeros_like(jnp.asarray(cfg.KP))
+    kd = jnp.asarray(cfg.KD) if use_pd else jnp.zeros_like(jnp.asarray(cfg.KD))
 
     def eval_fn(theta_key, idx):
         theta = sample_theta(theta_key, cfg.N_LINKS, cfg.DR_RANGES)
@@ -64,10 +63,9 @@ def summarize(endpoint, tracking, vrms, name, width=10):
 def evaluate_residual_controllers(
     cfg, controllers, x_refs, u_refs, w,
     mjx_model_nominal, nominal_body_mass,
-    name_width=10,
+    name_width=10, use_pd=True,
 ):
-    """Run hold-out eval for a dict of {name: make_controller_fn} controllers.
-    """
+    """Run hold-out eval for a dict of {name: make_controller_fn} controllers."""
     n_traj = x_refs.shape[0]
     theta_keys = jax.random.split(jax.random.PRNGKey(cfg.EVAL_SEED), cfg.N_EVAL_PLANTS)
     idxs = jnp.arange(cfg.N_EVAL_PLANTS) % n_traj
@@ -75,7 +73,8 @@ def evaluate_residual_controllers(
     results = {}
     for name, make_controller_fn in controllers.items():
         eval_fn = make_eval_fn(
-            cfg, mjx_model_nominal, nominal_body_mass, x_refs, u_refs, w, make_controller_fn)
+            cfg, mjx_model_nominal, nominal_body_mass, x_refs, u_refs, w, make_controller_fn,
+            use_pd=use_pd)
         batched_eval = jax.jit(jax.vmap(eval_fn, in_axes=(0, 0)))
         endpoints, trackings, vrmss = batched_eval(theta_keys, idxs)
         results[name] = (np.asarray(endpoints), np.asarray(trackings), np.asarray(vrmss))
@@ -95,16 +94,13 @@ def save_metrics(results, metrics_path):
     print(f"saved {metrics_path}")
 
 
-def eval_mlp_residual(cfg, controllers, traj_path, metrics_path, w, name_width=10):
-    """End-to-end MLP residual controller eval.
-
-    Caller pre-builds the `controllers` dict — `{name: make_controller_fn}`
-    """
+def eval_mlp_residual(cfg, controllers, traj_path, metrics_path, w, name_width=10, use_pd=True):
+    """End-to-end MLP residual controller eval. Caller pre-builds {name: make_controller_fn}."""
     print("loading trajectories ...")
     x_refs, u_refs = training.load_trajectories(traj_path)
     n_traj = x_refs.shape[0]
     T = x_refs.shape[1] - 1
-    print(f"  {n_traj} converged trajectories of length T={T}  (w={w})")
+    print(f"  {n_traj} converged trajectories of length T={T}  (w={w}, use_pd={use_pd})")
 
     print("building MJX model ...")
     mjx_model_nominal, nominal_body_mass = training.build_mjx_model(cfg.MODEL_PATH)
@@ -114,7 +110,7 @@ def eval_mlp_residual(cfg, controllers, traj_path, metrics_path, w, name_width=1
     results = evaluate_residual_controllers(
         cfg, controllers, x_refs, u_refs, w,
         mjx_model_nominal, nominal_body_mass,
-        name_width=name_width,
+        name_width=name_width, use_pd=use_pd,
     )
 
     if metrics_path is not None:

@@ -122,9 +122,9 @@ def main():
         if (i + 1) % args.log_every == 0:
             print(f"  iter {i + 1:5d}/{n_iter}  loss={loss:.6f}")
 
-    suffix = "oracle" if args.oracle else "pure"
-    params_path = cfg.OUTPUT_DIR / f"supervised_{suffix}_params.pkl"
-    loss_path = cfg.OUTPUT_DIR / f"supervised_{suffix}_loss_history.npy"
+    prefix = "oracle" if args.oracle else "pure"
+    params_path = cfg.OUTPUT_DIR / f"{prefix}_params.pkl"
+    loss_path = cfg.OUTPUT_DIR / f"{prefix}_loss_history.npy"
     cfg.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     with open(params_path, "wb") as f:
         pickle.dump(params, f)

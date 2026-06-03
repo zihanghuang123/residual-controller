@@ -42,6 +42,14 @@ def make_oracle_factory(network, params):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="plants/double_pendulum/config.py")
+    parser.add_argument("--no-pd", action="store_true",
+                        help="Disable PD baseline (use for supervised-trained controllers).")
+    args, _ = parser.parse_known_args()
+    import sys as _sys
+    _sys.argv = [_sys.argv[0], "--config", args.config]
     cfg = training.load_config()
 
     print("loading oracle params + building network ...")
@@ -58,6 +66,7 @@ def main():
         traj_path=cfg.OUTPUT_DIR / "trajectories.npz",
         metrics_path=cfg.OUTPUT_DIR / "metrics_oracle.npz",
         w=cfg.ORACLE["n_history"],
+        use_pd=not args.no_pd,
     )
 
     ep_pd = results["pd"][0].mean()
