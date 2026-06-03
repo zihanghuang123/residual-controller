@@ -6,6 +6,7 @@ Every EVAL_EVERY iterations: runs eval_mlp_residual, appends a row to <output>/p
 """
 
 import functools
+import pickle
 import sys
 from pathlib import Path
 
@@ -46,6 +47,14 @@ def main():
     key, init_key = jax.random.split(key)
     network, params = init_network(cfg, init_key)
 
+    params_path = cfg.OUTPUT_DIR / "pure_params.pkl"
+    if params_path.exists():
+        with open(params_path, "rb") as f:
+            params = pickle.load(f)
+        print(f"warm-starting from {params_path}")
+    else:
+        print("no existing pure_params.pkl; training from scratch")
+
     build_pure = make_build_controller_fn(network)
     pd_factory = lambda _theta: lambda *_: jnp.zeros(cfg.NU)
 
@@ -66,7 +75,7 @@ def main():
         params=params,
         build_controller_fn=build_pure,
         traj_path=cfg.OUTPUT_DIR / "trajectories.npz",
-        params_path=cfg.OUTPUT_DIR / "pure_params.pkl",
+        params_path=params_path,
         loss_path=cfg.OUTPUT_DIR / "pure_loss_history.npy",
         opt_state_path=cfg.OUTPUT_DIR / "pure_opt_state.pkl",
         key=key,
