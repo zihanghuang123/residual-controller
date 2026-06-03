@@ -27,7 +27,7 @@ def load_config(config_path: str):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
-    parser.add_argument("--n-thetas", type=int, default=10)
+    parser.add_argument("--n-thetas", type=int, default=50)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 

@@ -16,7 +16,7 @@ import numpy as np
 import optax
 
 from lib import rollout, training
-from lib.networks import MLPController, MLPPureController
+from lib.networks import MLPPureController
 
 
 def load_config(config_path: str) -> ModuleType:
@@ -29,8 +29,6 @@ def load_config(config_path: str) -> ModuleType:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
-    parser.add_argument("--oracle", action="store_true",
-                        help="Include theta in network input (oracle setting)")
     parser.add_argument("--log-every", type=int, default=100)
     args = parser.parse_args()
 
@@ -41,7 +39,6 @@ def main():
     data = np.load(cfg.OUTPUT_DIR / "supervised_dataset.npz")
     x_refs = jnp.asarray(data["x_refs"])               # (N, T+1, 2*nq)
     u_refs = jnp.asarray(data["u_refs"])               # (N, T, nu)
-    thetas = jnp.asarray(data["thetas"])               # (M, theta_dim)
     labels = jnp.asarray(data["u_residual_labels"])    # (N, M, T, nu)
 
     N, T_plus_1, _ = x_refs.shape
@@ -49,20 +46,16 @@ def main():
     M = labels.shape[1]
     print(f"  N={N} trajectories, M={M} thetas, T={T} steps")
 
-    hp = cfg.ORACLE if args.oracle else cfg.PURE
+    hp = cfg.PURE
     w = hp["n_history"]
     batch_size = hp["batch_size"]
     lr = hp["lr"]
-    n_iter = hp["n_iterations"]
+    n_iter = hp.get("n_iterations_supervised", hp["n_iterations"])
     grad_clip = hp["grad_clip_norm"]
-    print(f"  w={w}, batch_size={batch_size}, lr={lr}, n_iter={n_iter}, oracle={args.oracle}")
+    print(f"  w={w}, batch_size={batch_size}, lr={lr}, n_iter={n_iter}")
 
-    if args.oracle:
-        network = MLPController(hidden_sizes=hp["hidden_sizes"], out_dim=nu)
-        in_dim = training.mlp_residual_input_dim(cfg, w, with_theta=True)
-    else:
-        network = MLPPureController(hidden_sizes=hp["hidden_sizes"], out_dim=nu)
-        in_dim = training.mlp_residual_input_dim(cfg, w, with_theta=False)
+    network = MLPPureController(hidden_sizes=hp["hidden_sizes"], out_dim=nu)
+    in_dim = training.mlp_residual_input_dim(cfg, w, with_theta=False)
 
     key = jax.random.PRNGKey(0)
     key, init_key = jax.random.split(key)
@@ -83,9 +76,8 @@ def main():
         u_hist = u_nom_hist + u_resid_hist
         x_ref_window = jax.lax.dynamic_slice(x_refs[traj_idx], (t, 0), (w + 1, 2 * nq))
         u_ref_window = jax.lax.dynamic_slice(u_refs[traj_idx], (t, 0), (w + 1, nu))
-        theta = thetas[theta_idx] if args.oracle else None
         net_in = rollout.make_network_input(
-            x_hist_full, u_hist, x_ref_window, u_ref_window, theta_estimate=theta,
+            x_hist_full, u_hist, x_ref_window, u_ref_window,
         )
         return net_in, labels[traj_idx, theta_idx, t]
 
@@ -122,9 +114,8 @@ def main():
         if (i + 1) % args.log_every == 0:
             print(f"  iter {i + 1:5d}/{n_iter}  loss={loss:.6f}")
 
-    prefix = "oracle" if args.oracle else "pure"
-    params_path = cfg.OUTPUT_DIR / f"{prefix}_params.pkl"
-    loss_path = cfg.OUTPUT_DIR / f"{prefix}_loss_history.npy"
+    params_path = cfg.OUTPUT_DIR / "pure_params.pkl"
+    loss_path = cfg.OUTPUT_DIR / "pure_loss_history.npy"
     cfg.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     with open(params_path, "wb") as f:
         pickle.dump(params, f)

@@ -62,12 +62,13 @@ THETA_DIM = 3 * N_LINKS
 
 # Pure MLP residual
 PURE = {
-    "hidden_sizes": (512, 512),
-    "n_history": 300,
-    "n_rollout": 1500,
-    "batch_size": 64,
+    "hidden_sizes": (1024, 1024),
+    "n_history": 1000,
+    "n_rollout": 2000,
+    "batch_size": 128,
     "lr": 3e-4,
     "n_iterations": 8000,
+    "n_iterations_supervised": 100000,
     "grad_clip_norm": 1.0,
     "alpha_reg": 1e-5,
 }
