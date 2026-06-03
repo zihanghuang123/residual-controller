@@ -59,19 +59,11 @@ def main():
         apply_theta, in_axes=(None, 0, None, None)
     )(mjx_model_nominal, thetas, nominal_body_mass, n_links)
 
-    def forward_step(qp, qv, u):
-        d = mjx.make_data(mjx_model_nominal)
-        d = d.replace(qpos=qp, qvel=qv, ctrl=u)
-        d = mjx.forward(mjx_model_nominal, d)
-        return d.qacc
-
     def inverse_step(model, qp, qv, qa):
         d = mjx.make_data(model)
         d = d.replace(qpos=qp, qvel=qv, qacc=qa)
         d = mjx.inverse(model, d)
         return d.qfrc_inverse
-
-    fwd_over_time = jax.jit(jax.vmap(forward_step))
 
     inverse_over_time = jax.vmap(inverse_step, in_axes=(None, 0, 0, 0))
     inverse_over_theta_time = jax.jit(
@@ -85,9 +77,10 @@ def main():
     for i in range(N):
         q_nom = x_refs[i, :T, :nq]
         qd_nom = x_refs[i, :T, nq:]
+        qd_nom_next = x_refs[i, 1:T + 1, nq:]
+        qddot = (qd_nom_next - qd_nom) / cfg.TIMESTEP
         u_nom = u_refs[i]
 
-        qddot = fwd_over_time(q_nom, qd_nom, u_nom)
         tau_true = inverse_over_theta_time(perturbed_models, q_nom, qd_nom, qddot)
 
         qddot_noms[i] = np.asarray(qddot)
