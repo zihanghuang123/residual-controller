@@ -139,7 +139,7 @@ def training_loop(
 ):
     """Random-(idx, t0, theta) sampling loop. Returns (params, opt_state, loss_history).
 
-    If eval_callback is provided, it's called as eval_callback(params, iteration) every eval_every iterations.
+    If eval_callback is provided, it's called as eval_callback(params, opt_state, iteration) every eval_every iterations.
     """
     loss_history = np.zeros(n_iterations)
     for i in range(n_iterations):
@@ -155,7 +155,7 @@ def training_loop(
             print(f"  iter {i:5d}  loss = {float(loss):.6f}")
 
         if eval_callback is not None and eval_every is not None and (i + 1) % eval_every == 0:
-            eval_callback(params, i + 1)
+            eval_callback(params, opt_state, i + 1)
     return params, opt_state, loss_history
 
 
@@ -182,12 +182,13 @@ def train_mlp_controller(
     eval_callback=None,
     eval_every=None,
     opt_state_path: Path = None,
+    init_opt_state=None,
 ):
     """End-to-end MLP residual controller training.
 
     Caller pre-builds the network, initializes params, and constructs build_controller_fn.
 
-    Optional eval_callback(params, iteration) is invoked every eval_every iterations during training. opt_state_path enables saving Adam state alongside params for later resume.
+    Optional eval_callback(params, opt_state, iteration) is invoked every eval_every iterations during training. opt_state_path enables saving Adam state alongside params for later resume. init_opt_state warm-starts the Adam moments from a saved state.
     """
     print("loading trajectories ...")
     x_refs, u_refs = load_trajectories(traj_path)
@@ -204,7 +205,7 @@ def train_mlp_controller(
         optax.clip_by_global_norm(cfg_dict["grad_clip_norm"]),
         optax.adam(cfg_dict["lr"]),
     )
-    opt_state = optimizer.init(params)
+    opt_state = optimizer.init(params) if init_opt_state is None else init_opt_state
 
     loss_fn = make_mlp_residual_loss(
         cfg, cfg_dict,

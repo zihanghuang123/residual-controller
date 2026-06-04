@@ -118,7 +118,8 @@ def eval_mlp_residual(cfg, controllers, traj_path, metrics_path, w, name_width=1
 
 
 def make_eval_callback(cfg, make_controllers, target_name, w,
-                       csv_path, best_params_path, traj_path=None):
+                       csv_path, best_params_path, traj_path=None,
+                       best_opt_state_path=None):
     """Build a periodic eval callback for the training loop.
     """
     if traj_path is None:
@@ -130,7 +131,7 @@ def make_eval_callback(cfg, make_controllers, target_name, w,
 
     state = {"best": float("inf")}
 
-    def callback(params, iteration):
+    def callback(params, opt_state, iteration):
         controllers = make_controllers(params)
         results = eval_mlp_residual(
             cfg, controllers,
@@ -148,6 +149,9 @@ def make_eval_callback(cfg, make_controllers, target_name, w,
             best_params_path.parent.mkdir(parents=True, exist_ok=True)
             with open(best_params_path, "wb") as f:
                 pickle.dump(params, f)
+            if best_opt_state_path is not None:
+                with open(best_opt_state_path, "wb") as f:
+                    pickle.dump(opt_state, f)
 
         with open(csv_path, "a") as f:
             f.write(f"{iteration},{ep_pd:.6f},{ep_target:.6f},"

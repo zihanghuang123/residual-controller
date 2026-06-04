@@ -47,13 +47,21 @@ def main():
     key, init_key = jax.random.split(key)
     network, params = init_network(cfg, init_key)
 
-    params_path = cfg.OUTPUT_DIR / "pure_params.pkl"
-    if params_path.exists():
-        with open(params_path, "rb") as f:
+    best_params_path = cfg.OUTPUT_DIR / "pure_params_best.pkl"
+    best_opt_state_path = cfg.OUTPUT_DIR / "pure_opt_state_best.pkl"
+
+    if best_params_path.exists():
+        with open(best_params_path, "rb") as f:
             params = pickle.load(f)
-        print(f"warm-starting from {params_path}")
+        print(f"warm-starting params from {best_params_path}")
     else:
-        print("no existing pure_params.pkl; training from scratch")
+        print("no existing pure_params_best.pkl; training from scratch")
+
+    init_opt_state = None
+    if best_opt_state_path.exists():
+        with open(best_opt_state_path, "rb") as f:
+            init_opt_state = pickle.load(f)
+        print(f"warm-starting optimizer from {best_opt_state_path}")
 
     build_pure = make_build_controller_fn(network)
     pd_factory = lambda _theta: lambda *_: jnp.zeros(cfg.NU)
@@ -67,7 +75,8 @@ def main():
         target_name="pure",
         w=cfg.PURE["n_history"],
         csv_path=cfg.OUTPUT_DIR / "pure_eval_log.csv",
-        best_params_path=cfg.OUTPUT_DIR / "pure_params_best.pkl",
+        best_params_path=best_params_path,
+        best_opt_state_path=best_opt_state_path,
     )
 
     training.train_mlp_controller(
@@ -75,12 +84,13 @@ def main():
         params=params,
         build_controller_fn=build_pure,
         traj_path=cfg.OUTPUT_DIR / "trajectories.npz",
-        params_path=params_path,
+        params_path=cfg.OUTPUT_DIR / "pure_params.pkl",
         loss_path=cfg.OUTPUT_DIR / "pure_loss_history.npy",
         opt_state_path=cfg.OUTPUT_DIR / "pure_opt_state.pkl",
         key=key,
         eval_callback=eval_callback,
         eval_every=EVAL_EVERY,
+        init_opt_state=init_opt_state,
     )
 
 
