@@ -78,7 +78,7 @@ PURE = {
 PURE_RNN = {
     "hidden_sizes": (128, 128),
     "n_rollout": 2000,
-    "batch_size": 128,
+    "batch_size": 512,
     "lr": 3e-4,
     "n_iterations": 8000,
     "n_iterations_supervised": 15000,

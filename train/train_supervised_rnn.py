@@ -26,6 +26,8 @@ LOG_EVERY = 50
 EVAL_EVERY = 500   # closed-loop eval cadence; None disables
 N_EVAL = 200
 BETA_DECAY_ITERS = 6000   # DAgger: roll out expert, anneal beta 1->0 onto the learner over this many iters
+ACC_KP = 100.0     # computed-torque restoring in accel space (critically damped: ACC_KD = 2*sqrt(ACC_KP))
+ACC_KD = 20.0
 
 
 def main():
@@ -82,20 +84,23 @@ def main():
 
         def step(carry, inp):
             d, h, u_prev = carry
-            x_ref, u_ref, qddot_des = inp
+            x_ref, u_ref, qddot_ref = inp
             q_curr, qd_curr = d.qpos, d.qvel
             x_curr = jnp.concatenate([q_curr, qd_curr])
 
             step_in = rollout.make_rnn_step_input(x_curr, u_prev, x_ref, u_ref)
             new_h, v = network.apply(params, h, step_in)
 
+            e = x_ref[:nq] - q_curr
+            edot = x_ref[nq:] - qd_curr
+            pd = kp * e + kd * edot
+            qddot_des = qddot_ref + ACC_KP * e + ACC_KD * edot   # computed-torque restoring
             tau = inverse_feedforward(model, q_curr, qd_curr, qddot_des)
-            label = jax.lax.stop_gradient(tau - u_ref)        # expert feedforward at this state
+            label = jax.lax.stop_gradient(tau - u_ref - pd)      # residual on top of u_ref + pd
             loss_t = jnp.mean((v - label) ** 2)
 
-            pd = kp * (x_ref[:nq] - q_curr) + kd * (x_ref[nq:] - qd_curr)
-            residual = beta * label + (1.0 - beta) * v        # DAgger: roll expert label, anneal to learner v
-            u = jax.lax.stop_gradient(u_ref + pd + residual)  # detach: sim is a data source, not a grad path
+            residual = beta * label + (1.0 - beta) * v          # DAgger: roll expert, anneal to learner
+            u = jax.lax.stop_gradient(u_ref + pd + residual)    # detach: sim is a data source, not a grad path
             d = mjx.step(model, d.replace(ctrl=u))
             return (d, new_h, u), loss_t
 
