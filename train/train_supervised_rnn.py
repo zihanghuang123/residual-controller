@@ -26,8 +26,8 @@ LOG_EVERY = 50
 EVAL_EVERY = 500   # closed-loop eval cadence; None disables
 N_EVAL = 200
 BETA_DECAY_ITERS = 6000   # DAgger: roll out expert, anneal beta 1->0 onto the learner over this many iters
-ACC_KP = 100.0     # computed-torque restoring in accel space (critically damped: ACC_KD = 2*sqrt(ACC_KP))
-ACC_KD = 20.0
+LOSS_CAP = 1.0e4     # drop exploded steps from the loss (a sane per-step loss is < ~500)
+STATE_CLIP = 1.0e3   # sanitize the per-step state so a divergent rollout can't poison v/label with inf/nan
 
 
 def main():
@@ -85,17 +85,15 @@ def main():
         def step(carry, inp):
             d, h, u_prev = carry
             x_ref, u_ref, qddot_ref = inp
-            q_curr, qd_curr = d.qpos, d.qvel
+            q_curr = jnp.clip(jnp.nan_to_num(d.qpos), -STATE_CLIP, STATE_CLIP)
+            qd_curr = jnp.clip(jnp.nan_to_num(d.qvel), -STATE_CLIP, STATE_CLIP)
             x_curr = jnp.concatenate([q_curr, qd_curr])
 
             step_in = rollout.make_rnn_step_input(x_curr, u_prev, x_ref, u_ref)
             new_h, v = network.apply(params, h, step_in)
 
-            e = x_ref[:nq] - q_curr
-            edot = x_ref[nq:] - qd_curr
-            pd = kp * e + kd * edot
-            qddot_des = qddot_ref + ACC_KP * e + ACC_KD * edot   # computed-torque restoring
-            tau = inverse_feedforward(model, q_curr, qd_curr, qddot_des)
+            pd = kp * (x_ref[:nq] - q_curr) + kd * (x_ref[nq:] - qd_curr)
+            tau = inverse_feedforward(model, q_curr, qd_curr, qddot_ref)
             label = jax.lax.stop_gradient(tau - u_ref - pd)      # residual on top of u_ref + pd
             loss_t = jnp.mean((v - label) ** 2)
 
@@ -106,7 +104,9 @@ def main():
 
         _, losses_t = jax.lax.scan(
             step, (d0, h0, jnp.zeros(nu)), (x_ref_seq, u_ref_seq, qddot_ref_seq))
-        return jnp.mean(losses_t[RNN_WARMUP:])
+        valid = jax.lax.stop_gradient(losses_t < LOSS_CAP)        # drop exploded steps, keep the good ones
+        losses_t = jnp.where(valid, losses_t, 0.0)
+        return jnp.sum(losses_t[RNN_WARMUP:]) / jnp.maximum(jnp.sum(valid[RNN_WARMUP:]), 1.0)
 
     # Dataset passed as args (None axis), not closed over, so XLA doesn't bake it in.
     batched_loss = jax.vmap(per_example_loss, in_axes=(None, None, None, 0, 0, None))
