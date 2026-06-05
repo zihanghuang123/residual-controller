@@ -26,7 +26,7 @@ LOG_EVERY = 50
 EVAL_EVERY = 500   # closed-loop eval cadence; None disables
 N_EVAL = 200
 BETA_DECAY_ITERS = 6000   # DAgger: roll out expert, anneal beta 1->0 onto the learner over this many iters
-LOSS_CAP = 1.0e4     # drop exploded steps from the loss (a sane per-step loss is < ~500)
+LOSS_CAP = 1.0e4     # trash a whole trajectory whose mean loss exceeds this (healthy is < ~hundreds)
 STATE_CLIP = 1.0e3   # sanitize the per-step state so a divergent rollout can't poison v/label with inf/nan
 
 
@@ -104,24 +104,25 @@ def main():
 
         _, losses_t = jax.lax.scan(
             step, (d0, h0, jnp.zeros(nu)), (x_ref_seq, u_ref_seq, qddot_ref_seq))
-        valid = jax.lax.stop_gradient(losses_t < LOSS_CAP)        # drop exploded steps, keep the good ones
-        losses_t = jnp.where(valid, losses_t, 0.0)
-        return jnp.sum(losses_t[RNN_WARMUP:]) / jnp.maximum(jnp.sum(valid[RNN_WARMUP:]), 1.0)
+        return jnp.mean(losses_t[RNN_WARMUP:])
 
     # Dataset passed as args (None axis), not closed over, so XLA doesn't bake it in.
     batched_loss = jax.vmap(per_example_loss, in_axes=(None, None, None, 0, 0, None))
 
     def loss_fn(params, x_refs, u_refs, idxs, theta_keys, beta):
-        return jnp.mean(batched_loss(params, x_refs, u_refs, idxs, theta_keys, beta))
+        loss_arr = batched_loss(params, x_refs, u_refs, idxs, theta_keys, beta)
+        valid = jax.lax.stop_gradient(loss_arr < LOSS_CAP)       # trash whole exploded trajectories
+        loss = jnp.sum(jnp.where(valid, loss_arr, 0.0)) / jnp.maximum(jnp.sum(valid), 1.0)
+        return loss, 1.0 - jnp.mean(valid.astype(jnp.float32))
 
-    grad_fn = jax.value_and_grad(loss_fn)
+    grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
 
     @jax.jit
     def train_step(params, opt_state, x_refs, u_refs, idxs, theta_keys, beta):
-        loss, grads = grad_fn(params, x_refs, u_refs, idxs, theta_keys, beta)
+        (loss, frac_masked), grads = grad_fn(params, x_refs, u_refs, idxs, theta_keys, beta)
         updates, opt_state = optimizer.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
-        return params, opt_state, loss
+        return params, opt_state, loss, frac_masked
 
     print("building closed-loop eval ...")
     params_path = cfg.OUTPUT_DIR / "pure_rnn_params.pkl"
@@ -139,12 +140,12 @@ def main():
         theta_keys = jax.random.split(k_theta, batch_size)
 
         beta = max(0.0, 1.0 - i / BETA_DECAY_ITERS)
-        params, opt_state, loss = train_step(
+        params, opt_state, loss, frac_masked = train_step(
             params, opt_state, x_refs, u_refs, idxs, theta_keys, jnp.float32(beta))
         loss_history[i] = float(loss)
 
         if (i + 1) % LOG_EVERY == 0:
-            print(f"  iter {i + 1:5d}/{n_iter}  loss={loss:.6f}  beta={beta:.3f}")
+            print(f"  iter {i + 1:5d}/{n_iter}  loss={loss:.4f}  masked={float(frac_masked):.2%}  beta={beta:.3f}")
         if EVAL_EVERY and (i + 1) % EVAL_EVERY == 0:
             eval_callback(params, i + 1)
 
