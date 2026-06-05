@@ -25,6 +25,7 @@ RNN_WARMUP = 50    # skip the cold-start transient (zero-init h) when scoring th
 LOG_EVERY = 50
 EVAL_EVERY = 500   # closed-loop eval cadence; None disables
 N_EVAL = 200
+BETA_DECAY_ITERS = 6000   # DAgger: roll out expert, anneal beta 1->0 onto the learner over this many iters
 
 
 def main():
@@ -42,7 +43,7 @@ def main():
     hidden_sizes = hp["hidden_sizes"]
     batch_size = hp["batch_size"]
     lr = hp["lr"]
-    n_iter = hp["n_iterations"]
+    n_iter = hp["n_iterations_supervised"]
     grad_clip = hp["grad_clip_norm"]
     kp = jnp.asarray(cfg.KP)
     kd = jnp.asarray(cfg.KD)
@@ -67,7 +68,7 @@ def main():
         d = d.replace(qpos=q, qvel=qd, qacc=qddot)
         return mjx.inverse(model, d).qfrc_inverse
 
-    def per_example_loss(params, x_refs, u_refs, idx, theta_key):
+    def per_example_loss(params, x_refs, u_refs, idx, theta_key, beta):
         theta = sample_theta(theta_key, cfg.N_LINKS, cfg.DR_RANGES)
         model = apply_theta(mjx_model_nominal, theta, nominal_body_mass, cfg.N_LINKS)
 
@@ -93,7 +94,8 @@ def main():
             loss_t = jnp.mean((v - label) ** 2)
 
             pd = kp * (x_ref[:nq] - q_curr) + kd * (x_ref[nq:] - qd_curr)
-            u = jax.lax.stop_gradient(u_ref + pd + v)         # detach: sim is a data source, not a grad path
+            residual = beta * label + (1.0 - beta) * v        # DAgger: roll expert label, anneal to learner v
+            u = jax.lax.stop_gradient(u_ref + pd + residual)  # detach: sim is a data source, not a grad path
             d = mjx.step(model, d.replace(ctrl=u))
             return (d, new_h, u), loss_t
 
@@ -102,16 +104,16 @@ def main():
         return jnp.mean(losses_t[RNN_WARMUP:])
 
     # Dataset passed as args (None axis), not closed over, so XLA doesn't bake it in.
-    batched_loss = jax.vmap(per_example_loss, in_axes=(None, None, None, 0, 0))
+    batched_loss = jax.vmap(per_example_loss, in_axes=(None, None, None, 0, 0, None))
 
-    def loss_fn(params, x_refs, u_refs, idxs, theta_keys):
-        return jnp.mean(batched_loss(params, x_refs, u_refs, idxs, theta_keys))
+    def loss_fn(params, x_refs, u_refs, idxs, theta_keys, beta):
+        return jnp.mean(batched_loss(params, x_refs, u_refs, idxs, theta_keys, beta))
 
     grad_fn = jax.value_and_grad(loss_fn)
 
     @jax.jit
-    def train_step(params, opt_state, x_refs, u_refs, idxs, theta_keys):
-        loss, grads = grad_fn(params, x_refs, u_refs, idxs, theta_keys)
+    def train_step(params, opt_state, x_refs, u_refs, idxs, theta_keys, beta):
+        loss, grads = grad_fn(params, x_refs, u_refs, idxs, theta_keys, beta)
         updates, opt_state = optimizer.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
         return params, opt_state, loss
@@ -131,11 +133,13 @@ def main():
         idxs = jax.random.randint(k_idx, (batch_size,), 0, N)
         theta_keys = jax.random.split(k_theta, batch_size)
 
-        params, opt_state, loss = train_step(params, opt_state, x_refs, u_refs, idxs, theta_keys)
+        beta = max(0.0, 1.0 - i / BETA_DECAY_ITERS)
+        params, opt_state, loss = train_step(
+            params, opt_state, x_refs, u_refs, idxs, theta_keys, jnp.float32(beta))
         loss_history[i] = float(loss)
 
         if (i + 1) % LOG_EVERY == 0:
-            print(f"  iter {i + 1:5d}/{n_iter}  loss={loss:.6f}")
+            print(f"  iter {i + 1:5d}/{n_iter}  loss={loss:.6f}  beta={beta:.3f}")
         if EVAL_EVERY and (i + 1) % EVAL_EVERY == 0:
             eval_callback(params, i + 1)
 
