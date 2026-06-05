@@ -1,8 +1,12 @@
-"""On-policy DAgger for the GRU residual controller with per-step online updates.
+"""Behavior cloning of a computed-torque expert into a GRU residual controller.
 
-Rolls the batch closed-loop (sim detached) and, at each timestep, updates the GRU on the
-batch-mean per-step loss toward the inverse-dynamics expert label. Truncated BPTT length 1
-(hidden state detached across steps). State is sanitized + exploded examples masked per step.
+Roll the inverse-dynamics expert closed-loop on a DR-sampled plant to get an on-expert
+state trajectory; at each visited state regress the GRU residual v toward
+    label = expert_torque - u_ref - PD,
+so that at deployment u = u_ref + PD + v reproduces the expert. The GRU sees the current
+state plus an n_future-step preview of the reference (states + controls). The sim is
+detached: it is a data source for states, never a gradient path, so BPTT runs through the
+GRU recurrence only, not the physics.
 """
 
 import pickle
@@ -21,135 +25,222 @@ from mujoco import mjx
 from lib import evaluation, networks, rollout, training
 from lib.domain_randomization import apply_theta, sample_theta
 
-RNN_WARMUP = 50    # skip the cold-start transient when reporting the loss
-LOG_EVERY = 1
-EVAL_EVERY = 10    # closed-loop eval cadence, in rollouts; None disables
+RNN_WARMUP = 50    # skip the cold-start transient (zero-init h) when scoring the loss
+LOG_EVERY = 50
+EVAL_EVERY = 500   # closed-loop eval cadence; None disables
 N_EVAL = 200
-BETA_DECAY_ITERS = 10000   # DAgger: roll expert, anneal beta 1->0 onto the learner over this many rollouts
-LOSS_CAP = 1.0e4   # mask a step's example whose per-step loss exceeds this (explosion)
-STATE_CLIP = 1.0e3 # sanitize the per-step state so a divergent rollout can't poison v/label with inf/nan
+LOSS_CAP = 1.0e4   # trash a whole trajectory whose mean loss exceeds this
+STATE_CLIP = 1.0e3 # sanitize the per-step state so a divergent rollout can't poison v/label
+
+
+def pad_reference(x_ref_full, u_ref_seq, w):
+    """Right-pad the reference arrays so a length-w preview slice is valid at every t."""
+    x_pad = jnp.concatenate([x_ref_full, jnp.repeat(x_ref_full[-1:], w - 1, axis=0)], axis=0)
+    u_pad = jnp.concatenate([u_ref_seq, jnp.repeat(u_ref_seq[-1:], w - 1, axis=0)], axis=0)
+    return x_pad, u_pad
+
+
+def window_input(x_curr, x_ref_pad, u_ref_pad, t, w, nq, nu):
+    """GRU per-step input: current state + w-step preview of (x_ref, u_ref)."""
+    x_win = jax.lax.dynamic_slice(x_ref_pad, (t, 0), (w, 2 * nq))
+    u_win = jax.lax.dynamic_slice(u_ref_pad, (t, 0), (w, nu))
+    return jnp.concatenate([x_curr, x_win.reshape(-1), u_win.reshape(-1)])
+
+
+def sanitize(q, qd):
+    q = jnp.clip(jnp.nan_to_num(q), -STATE_CLIP, STATE_CLIP)
+    qd = jnp.clip(jnp.nan_to_num(qd), -STATE_CLIP, STATE_CLIP)
+    return q, qd
+
+
+def make_net_eval_fn(cfg, mjx_model_nominal, nominal_body_mass, network, h0, w, x_refs, u_refs):
+    """Vmappable eval_fn(params, theta_key, idx) -> (endpoint, tracking, vrms).
+
+    Full-T closed-loop rollout under u = u_ref + PD + v, with the same windowed input the
+    GRU is trained on. params is an argument so the fn compiles once.
+    """
+    T = x_refs.shape[1] - 1
+    nq, nu = cfg.NQ, cfg.NU
+    kp = jnp.asarray(cfg.KP)
+    kd = jnp.asarray(cfg.KD)
+
+    def eval_fn(params, theta_key, idx):
+        theta = sample_theta(theta_key, cfg.N_LINKS, cfg.DR_RANGES)
+        model = apply_theta(mjx_model_nominal, theta, nominal_body_mass, cfg.N_LINKS)
+        x_ref_full = x_refs[idx]
+        u_ref_seq = u_refs[idx]
+        x_ref_pad, u_ref_pad = pad_reference(x_ref_full, u_ref_seq, w)
+        x0 = x_ref_full[0]
+        d0 = rollout.make_initial_data(model, x0[:nq], x0[nq:])
+
+        def step(carry, t):
+            d, h = carry
+            q, qd = sanitize(d.qpos, d.qvel)
+            x_curr = jnp.concatenate([q, qd])
+            x_ref_t, u_ref_t = x_ref_full[t], u_ref_seq[t]
+            new_h, v = network.apply(params, h, window_input(x_curr, x_ref_pad, u_ref_pad, t, w, nq, nu))
+            pd = kp * (x_ref_t[:nq] - q) + kd * (x_ref_t[nq:] - qd)
+            d = mjx.step(model, d.replace(ctrl=u_ref_t + pd + v))
+            return (d, new_h), (x_curr, v)
+
+        (final_d, _), (xs, vs) = jax.lax.scan(step, (d0, h0), jnp.arange(T))
+        x_final = jnp.concatenate([final_d.qpos, final_d.qvel])
+        return evaluation._rollout_metrics(xs, vs, x_final, x_refs[idx], nq)
+
+    return eval_fn
+
+
+def make_eval_callback(cfg, network, h0, w, x_refs, u_refs, mjx_model_nominal, nominal_body_mass,
+                       csv_path, best_params_path):
+    """Periodic closed-loop eval: log CSV, save best-endpoint params. PD baseline computed once."""
+    theta_keys, idxs = evaluation._eval_plants(cfg, x_refs.shape[0], N_EVAL)
+
+    net_eval = jax.jit(jax.vmap(
+        make_net_eval_fn(cfg, mjx_model_nominal, nominal_body_mass, network, h0, w, x_refs, u_refs),
+        in_axes=(None, 0, 0)))
+    pd_eval = jax.jit(jax.vmap(evaluation.make_rnn_eval_fn(
+        cfg, mjx_model_nominal, nominal_body_mass,
+        evaluation.pd_controller_apply(cfg.NU), jnp.zeros(1), x_refs, u_refs),
+        in_axes=(None, 0, 0)))
+    ep_pd = float(pd_eval(jnp.zeros(1), theta_keys, idxs)[0].mean())
+
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(csv_path, "w") as f:
+        f.write("iter,endpoint_pd,endpoint_rnn,tracking_rms_rnn,vrms_rnn,is_best\n")
+    state = {"best": float("inf")}
+
+    def callback(params, iteration):
+        ep, tr, vr = net_eval(params, theta_keys, idxs)
+        evaluation.summarize(ep, tr, vr, "bc_rnn")
+        ep_m, tr_rms, vr_m = float(ep.mean()), float(np.sqrt(tr).mean()), float(vr.mean())
+        is_best = evaluation._update_best(ep_m, state, params, best_params_path)
+        with open(csv_path, "a") as f:
+            f.write(f"{iteration},{ep_pd:.6f},{ep_m:.6f},{tr_rms:.6f},{vr_m:.6f},{int(is_best)}\n")
+        reduction = 100 * (1 - ep_m / ep_pd) if ep_pd > 0 else float("nan")
+        suffix = "  *** BEST ***" if is_best else ""
+        print(f"  [eval iter {iteration:5d}] bc_rnn endpoint={ep_m:.4f} vs pd {ep_pd:.4f} "
+              f"({reduction:.1f}% reduction){suffix}")
+
+    return callback
 
 
 def main():
     cfg = training.load_config()
     nq, nu = cfg.NQ, cfg.NU
     dt = cfg.TIMESTEP
+    kp = jnp.asarray(cfg.KP)
+    kd = jnp.asarray(cfg.KD)
+
+    hp = cfg.PURE_RNN
+    hidden_sizes = hp["hidden_sizes"]
+    w = hp["n_future"]
+    batch_size = hp["batch_size"]
+    lr = hp["lr"]
+    n_iter = hp["n_iterations_supervised"]
+    grad_clip = hp["grad_clip_norm"]
 
     print("loading trajectories ...")
     x_refs, u_refs = training.load_trajectories(cfg.OUTPUT_DIR / "trajectories.npz")
     N = x_refs.shape[0]
     T = u_refs.shape[1]
     print(f"  N={N} trajectories, T={T} steps")
-
-    hp = cfg.PURE_RNN
-    hidden_sizes = hp["hidden_sizes"]
-    batch_size = hp["batch_size"]
-    lr = hp["lr"]
-    n_iter = hp["n_iterations"]
-    grad_clip = hp["grad_clip_norm"]
-    kp = jnp.asarray(cfg.KP)
-    kd = jnp.asarray(cfg.KD)
-    print(f"  hidden={hidden_sizes}, batch_size={batch_size}, lr={lr}, n_iter={n_iter}")
-    print(f"  per-step online updates over T={T} (sim detached, TBPTT len 1)")
+    print(f"  hidden={hidden_sizes}, n_future={w}, batch_size={batch_size}, lr={lr}, n_iter={n_iter}")
+    print(f"  behavior cloning over full T={T} (sim detached); lower batch_size if OOM")
 
     mjx_model_nominal, nominal_body_mass = training.build_mjx_model(cfg.MODEL_PATH)
 
     network = networks.GRUPureController(hidden_sizes=hidden_sizes, out_dim=nu)
     h0 = networks.gru_initial_state(hidden_sizes)
-    dummy_x = rollout.make_rnn_step_input(jnp.zeros(2 * nq), jnp.zeros(nu), jnp.zeros(2 * nq), jnp.zeros(nu))
+    step_in_dim = 2 * nq * (1 + w) + nu * w  # [x_curr, x_ref preview, u_ref preview]
 
     key = jax.random.PRNGKey(0)
     key, init_key = jax.random.split(key)
-    params = network.init(init_key, h0, dummy_x)
+    params = network.init(init_key, h0, jnp.zeros(step_in_dim))
 
     optimizer = optax.chain(optax.clip_by_global_norm(grad_clip), optax.adam(lr))
     opt_state = optimizer.init(params)
 
-    def inverse_feedforward(model, q, qd, qddot):
-        d = mjx.make_data(model)
-        d = d.replace(qpos=q, qvel=qd, qacc=qddot)
+    def expert_torque(model, q, qd, qddot):
+        d = mjx.make_data(model).replace(qpos=q, qvel=qd, qacc=qddot)
         return mjx.inverse(model, d).qfrc_inverse
 
-    @jax.jit
-    def train_rollout(params, opt_state, x_refs, u_refs, idxs, theta_keys, beta):
-        thetas = jax.vmap(lambda k: sample_theta(k, cfg.N_LINKS, cfg.DR_RANGES))(theta_keys)
-        models = jax.vmap(apply_theta, in_axes=(None, 0, None, None))(
-            mjx_model_nominal, thetas, nominal_body_mass, cfg.N_LINKS)
+    def per_example_loss(params, idx, theta_key):
+        theta = sample_theta(theta_key, cfg.N_LINKS, cfg.DR_RANGES)
+        model = apply_theta(mjx_model_nominal, theta, nominal_body_mass, cfg.N_LINKS)
 
-        x_seq = x_refs[idxs, :T]                                  # (B, T, 2nq)
-        u_seq = u_refs[idxs]                                      # (B, T, nu)
-        qddot_seq = (x_refs[idxs, 1:T + 1, nq:] - x_refs[idxs, :T, nq:]) / dt
-        x_t = jnp.transpose(x_seq, (1, 0, 2))                     # scan over time -> (T, B, ...)
-        u_t = jnp.transpose(u_seq, (1, 0, 2))
-        qa_t = jnp.transpose(qddot_seq, (1, 0, 2))
+        x_ref_full = x_refs[idx]                          # (T+1, 2nq)
+        u_ref_seq = u_refs[idx]                           # (T, nu)
+        x_ref_seq = x_ref_full[:T]                        # (T, 2nq)
+        qd_ref = x_ref_full[:, nq:]
+        qddot_ref = (qd_ref[1:T + 1] - qd_ref[:T]) / dt   # (T, nq) reference accel target
+        x_ref_pad, u_ref_pad = pad_reference(x_ref_full, u_ref_seq, w)
 
-        bs = idxs.shape[0]
-        d0 = jax.vmap(rollout.make_initial_data)(models, x_seq[:, 0, :nq], x_seq[:, 0, nq:])
-        h0_b = jax.tree_util.tree_map(lambda a: jnp.broadcast_to(a, (bs,) + a.shape), h0)
+        x0 = x_ref_full[0]
+        d0 = rollout.make_initial_data(model, x0[:nq], x0[nq:])
 
         def step(carry, inp):
-            d, h, params, opt_state, u_prev = carry
-            x_ref, u_ref, qddot_ref = inp
+            d, h = carry
+            t, x_ref_t, u_ref_t, qddot_ref_t = inp
+            q, qd = sanitize(d.qpos, d.qvel)
+            x_curr = jnp.concatenate([q, qd])
 
-            q = jnp.clip(jnp.nan_to_num(d.qpos), -STATE_CLIP, STATE_CLIP)
-            qd = jnp.clip(jnp.nan_to_num(d.qvel), -STATE_CLIP, STATE_CLIP)
-            x_curr = jnp.concatenate([q, qd], axis=-1)
-            x_in = jax.vmap(rollout.make_rnn_step_input)(x_curr, u_prev, x_ref, u_ref)
+            new_h, v = network.apply(params, h, window_input(x_curr, x_ref_pad, u_ref_pad, t, w, nq, nu))
 
-            pd = kp * (x_ref[:, :nq] - q) + kd * (x_ref[:, nq:] - qd)
-            tau = jax.vmap(inverse_feedforward)(models, q, qd, qddot_ref)
-            label = jax.lax.stop_gradient(tau - u_ref - pd)
+            pd = kp * (x_ref_t[:nq] - q) + kd * (x_ref_t[nq:] - qd)
+            tau = expert_torque(model, q, qd, qddot_ref_t)
+            label = jax.lax.stop_gradient(tau - u_ref_t - pd)   # residual on top of u_ref + pd
+            loss_t = jnp.mean((v - label) ** 2)
 
-            def batch_loss(p):
-                new_h, v = jax.vmap(lambda hh, xx: network.apply(p, hh, xx))(
-                    jax.lax.stop_gradient(h), x_in)
-                se = jnp.mean((v - label) ** 2, axis=-1)         # (B,) per-example
-                valid = jax.lax.stop_gradient(se < LOSS_CAP)
-                loss = jnp.sum(jnp.where(valid, se, 0.0)) / jnp.maximum(jnp.sum(valid), 1.0)
-                return loss, (new_h, v, valid)
+            u = jax.lax.stop_gradient(tau)                      # BC: step the sim with the expert
+            d = mjx.step(model, d.replace(ctrl=u))
+            return (d, new_h), loss_t
 
-            (loss, (new_h, v, valid)), grads = jax.value_and_grad(batch_loss, has_aux=True)(params)
-            updates, opt_state = optimizer.update(grads, opt_state, params)
-            params = optax.apply_updates(params, updates)
+        _, losses_t = jax.lax.scan(
+            step, (d0, h0), (jnp.arange(T), x_ref_seq, u_ref_seq, qddot_ref))
+        return jnp.mean(losses_t[RNN_WARMUP:])
 
-            residual = beta * label + (1.0 - beta) * v
-            u = jax.lax.stop_gradient(u_ref + pd + residual)
-            d = jax.vmap(lambda m, dd, uu: mjx.step(m, dd.replace(ctrl=uu)))(models, d, u)
-            frac = 1.0 - jnp.mean(valid.astype(jnp.float32))
-            return (d, new_h, params, opt_state, u), (loss, frac)
+    batched_loss = jax.vmap(per_example_loss, in_axes=(None, 0, 0))
 
-        init = (d0, h0_b, params, opt_state, jnp.zeros((bs, nu)))
-        (_, _, params, opt_state, _), (losses, fracs) = jax.lax.scan(step, init, (x_t, u_t, qa_t))
-        return params, opt_state, jnp.mean(losses[RNN_WARMUP:]), jnp.mean(fracs[RNN_WARMUP:])
+    def loss_fn(params, idxs, theta_keys):
+        loss_arr = batched_loss(params, idxs, theta_keys)
+        valid = jax.lax.stop_gradient(loss_arr < LOSS_CAP)      # trash whole exploded trajectories
+        loss = jnp.sum(jnp.where(valid, loss_arr, 0.0)) / jnp.maximum(jnp.sum(valid), 1.0)
+        return loss, 1.0 - jnp.mean(valid.astype(jnp.float32))
+
+    grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
+
+    @jax.jit
+    def train_step(params, opt_state, idxs, theta_keys):
+        (loss, frac_masked), grads = grad_fn(params, idxs, theta_keys)
+        updates, opt_state = optimizer.update(grads, opt_state, params)
+        params = optax.apply_updates(params, updates)
+        return params, opt_state, loss, frac_masked
 
     print("building closed-loop eval ...")
     params_path = cfg.OUTPUT_DIR / "pure_rnn_params.pkl"
-    eval_callback = evaluation.make_rnn_eval_callback(
-        cfg, network, h0, x_refs, u_refs, mjx_model_nominal, nominal_body_mass,
+    eval_callback = make_eval_callback(
+        cfg, network, h0, w, x_refs, u_refs, mjx_model_nominal, nominal_body_mass,
         csv_path=cfg.OUTPUT_DIR / "pure_rnn_eval_log.csv",
-        best_params_path=params_path, n_eval=N_EVAL)
+        best_params_path=params_path)
 
-    print(f"training {n_iter} rollouts ({T} updates each) ...")
+    print(f"training {n_iter} iterations ...")
     loss_history = np.zeros(n_iter)
     for i in range(n_iter):
         key, k_idx, k_theta = jax.random.split(key, 3)
         idxs = jax.random.randint(k_idx, (batch_size,), 0, N)
         theta_keys = jax.random.split(k_theta, batch_size)
 
-        beta = max(0.0, 1.0 - i / BETA_DECAY_ITERS)
-        params, opt_state, loss, frac = train_rollout(
-            params, opt_state, x_refs, u_refs, idxs, theta_keys, jnp.float32(beta))
+        params, opt_state, loss, frac_masked = train_step(params, opt_state, idxs, theta_keys)
         loss_history[i] = float(loss)
 
         if (i + 1) % LOG_EVERY == 0:
-            print(f"  rollout {i + 1:4d}/{n_iter}  loss={float(loss):.4f}  "
-                  f"masked={float(frac):.2%}  beta={beta:.3f}")
+            print(f"  iter {i + 1:5d}/{n_iter}  loss={loss:.4f}  masked={float(frac_masked):.2%}")
         if EVAL_EVERY and (i + 1) % EVAL_EVERY == 0:
             eval_callback(params, i + 1)
 
     cfg.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     loss_path = cfg.OUTPUT_DIR / "pure_rnn_loss_history.npy"
-    if not params_path.exists():
+    if not params_path.exists():   # no eval checkpoint saved; fall back to the final iterate
         with open(params_path, "wb") as f:
             pickle.dump(params, f)
     np.save(loss_path, loss_history)
