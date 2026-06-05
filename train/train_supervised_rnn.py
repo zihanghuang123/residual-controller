@@ -1,4 +1,9 @@
-"""Supervised GRU residual training: full-sequence BPTT on inverse-dynamics labels at perturbed states."""
+"""On-policy DAgger for the GRU residual controller.
+
+Roll the controller closed-loop with the simulator detached (stop_gradient on the action),
+label each visited state with the inverse-dynamics feedforward inverse(theta, q, qd, qddot_ref) - u_ref,
+and regress the GRU toward it. Fixes covariate shift without backprop through the chaotic sim.
+"""
 
 import pickle
 import sys
@@ -11,39 +16,40 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+from mujoco import mjx
 
 from lib import evaluation, networks, rollout, training
+from lib.domain_randomization import apply_theta, sample_theta
 
 RNN_WARMUP = 50    # skip the cold-start transient (zero-init h) when scoring the loss
-LOG_EVERY = 100
-EVAL_EVERY = 2000  # closed-loop eval cadence; None disables
+LOG_EVERY = 50
+EVAL_EVERY = 500   # closed-loop eval cadence; None disables
 N_EVAL = 200
 
 
 def main():
     cfg = training.load_config()
     nq, nu = cfg.NQ, cfg.NU
+    dt = cfg.TIMESTEP
 
-    print("loading dataset ...")
-    data = np.load(cfg.OUTPUT_DIR / "supervised_dataset.npz")
-    x_refs = jnp.asarray(data["x_refs"])               # (N, T+1, 2*nq)
-    u_refs = jnp.asarray(data["u_refs"])               # (N, T, nu)
-    x_pert = jnp.asarray(data["x_perturbed"])          # (N, T, 2*nq), drifted states
-    labels = jnp.asarray(data["u_residual_labels"])    # (N, M, T, nu)
-
+    print("loading trajectories ...")
+    x_refs, u_refs = training.load_trajectories(cfg.OUTPUT_DIR / "trajectories.npz")
     N = x_refs.shape[0]
     T = u_refs.shape[1]
-    M = labels.shape[1]
-    print(f"  N={N} trajectories, M={M} thetas, T={T} steps")
+    print(f"  N={N} trajectories, T={T} steps")
 
     hp = cfg.PURE_RNN
     hidden_sizes = hp["hidden_sizes"]
     batch_size = hp["batch_size"]
     lr = hp["lr"]
-    n_iter = hp.get("n_iterations_supervised", hp["n_iterations"])
+    n_iter = hp["n_iterations"]
     grad_clip = hp["grad_clip_norm"]
+    kp = jnp.asarray(cfg.KP)
+    kd = jnp.asarray(cfg.KD)
     print(f"  hidden={hidden_sizes}, batch_size={batch_size}, lr={lr}, n_iter={n_iter}")
-    print(f"  full-sequence BPTT over T={T}; lower batch_size if OOM")
+    print(f"  on-policy rollout over T={T} (sim detached); lower batch_size if OOM")
+
+    mjx_model_nominal, nominal_body_mass = training.build_mjx_model(cfg.MODEL_PATH)
 
     network = networks.GRUPureController(hidden_sizes=hidden_sizes, out_dim=nu)
     h0 = networks.gru_initial_state(hidden_sizes)
@@ -56,44 +62,61 @@ def main():
     optimizer = optax.chain(optax.clip_by_global_norm(grad_clip), optax.adam(lr))
     opt_state = optimizer.init(params)
 
-    def build_sequence(x_pert, x_refs, u_refs, labels, traj_idx, theta_idx):
-        x_cur_seq = x_pert[traj_idx]                  # (T, 2*nq) drifted state the net sees
-        x_ref_seq = x_refs[traj_idx, :T]             # (T, 2*nq) reference
-        u_ref_seq = u_refs[traj_idx]
-        label_seq = labels[traj_idx, theta_idx]
-        applied = u_ref_seq + label_seq              # control consistent with this theta
-        u_prev_seq = jnp.concatenate([jnp.zeros((1, nu)), applied[:-1]], axis=0)
-        step_inputs = jax.vmap(rollout.make_rnn_step_input)(x_cur_seq, u_prev_seq, x_ref_seq, u_ref_seq)
-        return step_inputs, label_seq
+    def inverse_feedforward(model, q, qd, qddot):
+        d = mjx.make_data(model)
+        d = d.replace(qpos=q, qvel=qd, qacc=qddot)
+        return mjx.inverse(model, d).qfrc_inverse
 
-    def run_sequence(params, step_inputs):
-        def step(h, x):
-            return network.apply(params, h, x)
-        _, preds = jax.lax.scan(step, h0, step_inputs)
-        return preds
+    def per_example_loss(params, x_refs, u_refs, idx, theta_key):
+        theta = sample_theta(theta_key, cfg.N_LINKS, cfg.DR_RANGES)
+        model = apply_theta(mjx_model_nominal, theta, nominal_body_mass, cfg.N_LINKS)
 
-    def per_example_loss(params, x_pert, x_refs, u_refs, labels, traj_idx, theta_idx):
-        step_inputs, label_seq = build_sequence(x_pert, x_refs, u_refs, labels, traj_idx, theta_idx)
-        preds = run_sequence(params, step_inputs)
-        return jnp.mean((preds[RNN_WARMUP:] - label_seq[RNN_WARMUP:]) ** 2)
+        x_ref_seq = x_refs[idx, :T]                       # (T, 2nq)
+        u_ref_seq = u_refs[idx]                           # (T, nu)
+        qd_ref = x_refs[idx, :, nq:]
+        qddot_ref_seq = (qd_ref[1:] - qd_ref[:T]) / dt    # (T, nq) reference accel target
 
-    # Arrays passed as args (None axis), not closed over, so XLA doesn't bake the dataset in.
-    batched_loss = jax.vmap(per_example_loss, in_axes=(None, None, None, None, None, 0, 0))
+        x0 = x_refs[idx, 0]
+        d0 = rollout.make_initial_data(model, x0[:nq], x0[nq:])
 
-    def loss_fn(params, x_pert, x_refs, u_refs, labels, traj_idxs, theta_idxs):
-        return jnp.mean(batched_loss(params, x_pert, x_refs, u_refs, labels, traj_idxs, theta_idxs))
+        def step(carry, inp):
+            d, h, u_prev = carry
+            x_ref, u_ref, qddot_des = inp
+            q_curr, qd_curr = d.qpos, d.qvel
+            x_curr = jnp.concatenate([q_curr, qd_curr])
+
+            step_in = rollout.make_rnn_step_input(x_curr, u_prev, x_ref, u_ref)
+            new_h, v = network.apply(params, h, step_in)
+
+            tau = inverse_feedforward(model, q_curr, qd_curr, qddot_des)
+            label = jax.lax.stop_gradient(tau - u_ref)        # expert feedforward at this state
+            loss_t = jnp.mean((v - label) ** 2)
+
+            pd = kp * (x_ref[:nq] - q_curr) + kd * (x_ref[nq:] - qd_curr)
+            u = jax.lax.stop_gradient(u_ref + pd + v)         # detach: sim is a data source, not a grad path
+            d = mjx.step(model, d.replace(ctrl=u))
+            return (d, new_h, u), loss_t
+
+        _, losses_t = jax.lax.scan(
+            step, (d0, h0, jnp.zeros(nu)), (x_ref_seq, u_ref_seq, qddot_ref_seq))
+        return jnp.mean(losses_t[RNN_WARMUP:])
+
+    # Dataset passed as args (None axis), not closed over, so XLA doesn't bake it in.
+    batched_loss = jax.vmap(per_example_loss, in_axes=(None, None, None, 0, 0))
+
+    def loss_fn(params, x_refs, u_refs, idxs, theta_keys):
+        return jnp.mean(batched_loss(params, x_refs, u_refs, idxs, theta_keys))
 
     grad_fn = jax.value_and_grad(loss_fn)
 
     @jax.jit
-    def train_step(params, opt_state, x_pert, x_refs, u_refs, labels, traj_idxs, theta_idxs):
-        loss, grads = grad_fn(params, x_pert, x_refs, u_refs, labels, traj_idxs, theta_idxs)
+    def train_step(params, opt_state, x_refs, u_refs, idxs, theta_keys):
+        loss, grads = grad_fn(params, x_refs, u_refs, idxs, theta_keys)
         updates, opt_state = optimizer.update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
         return params, opt_state, loss
 
     print("building closed-loop eval ...")
-    mjx_model_nominal, nominal_body_mass = training.build_mjx_model(cfg.MODEL_PATH)
     params_path = cfg.OUTPUT_DIR / "pure_rnn_params.pkl"
     eval_callback = evaluation.make_rnn_eval_callback(
         cfg, network, h0, x_refs, u_refs, mjx_model_nominal, nominal_body_mass,
@@ -104,12 +127,11 @@ def main():
     print(f"training {n_iter} iterations ...")
     loss_history = np.zeros(n_iter)
     for i in range(n_iter):
-        key, k_traj, k_theta = jax.random.split(key, 3)
-        traj_idxs = jax.random.randint(k_traj, (batch_size,), 0, N)
-        theta_idxs = jax.random.randint(k_theta, (batch_size,), 0, M)
+        key, k_idx, k_theta = jax.random.split(key, 3)
+        idxs = jax.random.randint(k_idx, (batch_size,), 0, N)
+        theta_keys = jax.random.split(k_theta, batch_size)
 
-        params, opt_state, loss = train_step(
-            params, opt_state, x_pert, x_refs, u_refs, labels, traj_idxs, theta_idxs)
+        params, opt_state, loss = train_step(params, opt_state, x_refs, u_refs, idxs, theta_keys)
         loss_history[i] = float(loss)
 
         if (i + 1) % LOG_EVERY == 0:
