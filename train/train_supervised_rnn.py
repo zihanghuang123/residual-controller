@@ -1,8 +1,8 @@
-"""On-policy DAgger for the GRU residual controller.
+"""On-policy DAgger for the GRU residual controller with per-step online updates.
 
-Roll the controller closed-loop with the simulator detached (stop_gradient on the action),
-label each visited state with the inverse-dynamics feedforward inverse(theta, q, qd, qddot_ref) - u_ref,
-and regress the GRU toward it. Fixes covariate shift without backprop through the chaotic sim.
+Rolls the batch closed-loop (sim detached) and, at each timestep, updates the GRU on the
+batch-mean per-step loss toward the inverse-dynamics expert label. Truncated BPTT length 1
+(hidden state detached across steps). State is sanitized + exploded examples masked per step.
 """
 
 import pickle
@@ -21,13 +21,13 @@ from mujoco import mjx
 from lib import evaluation, networks, rollout, training
 from lib.domain_randomization import apply_theta, sample_theta
 
-RNN_WARMUP = 50    # skip the cold-start transient (zero-init h) when scoring the loss
-LOG_EVERY = 50
-EVAL_EVERY = 500   # closed-loop eval cadence; None disables
+RNN_WARMUP = 50    # skip the cold-start transient when reporting the loss
+LOG_EVERY = 1
+EVAL_EVERY = 10    # closed-loop eval cadence, in rollouts; None disables
 N_EVAL = 200
-BETA_DECAY_ITERS = 6000   # DAgger: roll out expert, anneal beta 1->0 onto the learner over this many iters
-LOSS_CAP = 1.0e4     # trash a whole trajectory whose mean loss exceeds this (healthy is < ~hundreds)
-STATE_CLIP = 1.0e3   # sanitize the per-step state so a divergent rollout can't poison v/label with inf/nan
+BETA_DECAY_ITERS = 10000   # DAgger: roll expert, anneal beta 1->0 onto the learner over this many rollouts
+LOSS_CAP = 1.0e4   # mask a step's example whose per-step loss exceeds this (explosion)
+STATE_CLIP = 1.0e3 # sanitize the per-step state so a divergent rollout can't poison v/label with inf/nan
 
 
 def main():
@@ -45,12 +45,12 @@ def main():
     hidden_sizes = hp["hidden_sizes"]
     batch_size = hp["batch_size"]
     lr = hp["lr"]
-    n_iter = hp["n_iterations_supervised"]
+    n_iter = hp["n_iterations"]
     grad_clip = hp["grad_clip_norm"]
     kp = jnp.asarray(cfg.KP)
     kd = jnp.asarray(cfg.KD)
     print(f"  hidden={hidden_sizes}, batch_size={batch_size}, lr={lr}, n_iter={n_iter}")
-    print(f"  on-policy rollout over T={T} (sim detached); lower batch_size if OOM")
+    print(f"  per-step online updates over T={T} (sim detached, TBPTT len 1)")
 
     mjx_model_nominal, nominal_body_mass = training.build_mjx_model(cfg.MODEL_PATH)
 
@@ -70,69 +70,66 @@ def main():
         d = d.replace(qpos=q, qvel=qd, qacc=qddot)
         return mjx.inverse(model, d).qfrc_inverse
 
-    def per_example_loss(params, x_refs, u_refs, idx, theta_key, beta):
-        theta = sample_theta(theta_key, cfg.N_LINKS, cfg.DR_RANGES)
-        model = apply_theta(mjx_model_nominal, theta, nominal_body_mass, cfg.N_LINKS)
+    @jax.jit
+    def train_rollout(params, opt_state, x_refs, u_refs, idxs, theta_keys, beta):
+        thetas = jax.vmap(lambda k: sample_theta(k, cfg.N_LINKS, cfg.DR_RANGES))(theta_keys)
+        models = jax.vmap(apply_theta, in_axes=(None, 0, None, None))(
+            mjx_model_nominal, thetas, nominal_body_mass, cfg.N_LINKS)
 
-        x_ref_seq = x_refs[idx, :T]                       # (T, 2nq)
-        u_ref_seq = u_refs[idx]                           # (T, nu)
-        qd_ref = x_refs[idx, :, nq:]
-        qddot_ref_seq = (qd_ref[1:] - qd_ref[:T]) / dt    # (T, nq) reference accel target
+        x_seq = x_refs[idxs, :T]                                  # (B, T, 2nq)
+        u_seq = u_refs[idxs]                                      # (B, T, nu)
+        qddot_seq = (x_refs[idxs, 1:T + 1, nq:] - x_refs[idxs, :T, nq:]) / dt
+        x_t = jnp.transpose(x_seq, (1, 0, 2))                     # scan over time -> (T, B, ...)
+        u_t = jnp.transpose(u_seq, (1, 0, 2))
+        qa_t = jnp.transpose(qddot_seq, (1, 0, 2))
 
-        x0 = x_refs[idx, 0]
-        d0 = rollout.make_initial_data(model, x0[:nq], x0[nq:])
+        bs = idxs.shape[0]
+        d0 = jax.vmap(rollout.make_initial_data)(models, x_seq[:, 0, :nq], x_seq[:, 0, nq:])
+        h0_b = jax.tree_util.tree_map(lambda a: jnp.broadcast_to(a, (bs,) + a.shape), h0)
 
         def step(carry, inp):
-            d, h, u_prev = carry
+            d, h, params, opt_state, u_prev = carry
             x_ref, u_ref, qddot_ref = inp
-            q_curr = jnp.clip(jnp.nan_to_num(d.qpos), -STATE_CLIP, STATE_CLIP)
-            qd_curr = jnp.clip(jnp.nan_to_num(d.qvel), -STATE_CLIP, STATE_CLIP)
-            x_curr = jnp.concatenate([q_curr, qd_curr])
 
-            step_in = rollout.make_rnn_step_input(x_curr, u_prev, x_ref, u_ref)
-            new_h, v = network.apply(params, h, step_in)
+            q = jnp.clip(jnp.nan_to_num(d.qpos), -STATE_CLIP, STATE_CLIP)
+            qd = jnp.clip(jnp.nan_to_num(d.qvel), -STATE_CLIP, STATE_CLIP)
+            x_curr = jnp.concatenate([q, qd], axis=-1)
+            x_in = jax.vmap(rollout.make_rnn_step_input)(x_curr, u_prev, x_ref, u_ref)
 
-            pd = kp * (x_ref[:nq] - q_curr) + kd * (x_ref[nq:] - qd_curr)
-            tau = inverse_feedforward(model, q_curr, qd_curr, qddot_ref)
-            label = jax.lax.stop_gradient(tau - u_ref - pd)      # residual on top of u_ref + pd
-            loss_t = jnp.mean((v - label) ** 2)
+            pd = kp * (x_ref[:, :nq] - q) + kd * (x_ref[:, nq:] - qd)
+            tau = jax.vmap(inverse_feedforward)(models, q, qd, qddot_ref)
+            label = jax.lax.stop_gradient(tau - u_ref - pd)
 
-            residual = beta * label + (1.0 - beta) * v          # DAgger: roll expert, anneal to learner
-            u = jax.lax.stop_gradient(u_ref + pd + residual)    # detach: sim is a data source, not a grad path
-            d = mjx.step(model, d.replace(ctrl=u))
-            return (d, new_h, u), loss_t
+            def batch_loss(p):
+                new_h, v = jax.vmap(lambda hh, xx: network.apply(p, hh, xx))(
+                    jax.lax.stop_gradient(h), x_in)
+                se = jnp.mean((v - label) ** 2, axis=-1)         # (B,) per-example
+                valid = jax.lax.stop_gradient(se < LOSS_CAP)
+                loss = jnp.sum(jnp.where(valid, se, 0.0)) / jnp.maximum(jnp.sum(valid), 1.0)
+                return loss, (new_h, v, valid)
 
-        _, losses_t = jax.lax.scan(
-            step, (d0, h0, jnp.zeros(nu)), (x_ref_seq, u_ref_seq, qddot_ref_seq))
-        return jnp.mean(losses_t[RNN_WARMUP:])
+            (loss, (new_h, v, valid)), grads = jax.value_and_grad(batch_loss, has_aux=True)(params)
+            updates, opt_state = optimizer.update(grads, opt_state, params)
+            params = optax.apply_updates(params, updates)
 
-    # Dataset passed as args (None axis), not closed over, so XLA doesn't bake it in.
-    batched_loss = jax.vmap(per_example_loss, in_axes=(None, None, None, 0, 0, None))
+            residual = beta * label + (1.0 - beta) * v
+            u = jax.lax.stop_gradient(u_ref + pd + residual)
+            d = jax.vmap(lambda m, dd, uu: mjx.step(m, dd.replace(ctrl=uu)))(models, d, u)
+            frac = 1.0 - jnp.mean(valid.astype(jnp.float32))
+            return (d, new_h, params, opt_state, u), (loss, frac)
 
-    def loss_fn(params, x_refs, u_refs, idxs, theta_keys, beta):
-        loss_arr = batched_loss(params, x_refs, u_refs, idxs, theta_keys, beta)
-        valid = jax.lax.stop_gradient(loss_arr < LOSS_CAP)       # trash whole exploded trajectories
-        loss = jnp.sum(jnp.where(valid, loss_arr, 0.0)) / jnp.maximum(jnp.sum(valid), 1.0)
-        return loss, 1.0 - jnp.mean(valid.astype(jnp.float32))
-
-    grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-
-    @jax.jit
-    def train_step(params, opt_state, x_refs, u_refs, idxs, theta_keys, beta):
-        (loss, frac_masked), grads = grad_fn(params, x_refs, u_refs, idxs, theta_keys, beta)
-        updates, opt_state = optimizer.update(grads, opt_state, params)
-        params = optax.apply_updates(params, updates)
-        return params, opt_state, loss, frac_masked
+        init = (d0, h0_b, params, opt_state, jnp.zeros((bs, nu)))
+        (_, _, params, opt_state, _), (losses, fracs) = jax.lax.scan(step, init, (x_t, u_t, qa_t))
+        return params, opt_state, jnp.mean(losses[RNN_WARMUP:]), jnp.mean(fracs[RNN_WARMUP:])
 
     print("building closed-loop eval ...")
     params_path = cfg.OUTPUT_DIR / "pure_rnn_params.pkl"
     eval_callback = evaluation.make_rnn_eval_callback(
         cfg, network, h0, x_refs, u_refs, mjx_model_nominal, nominal_body_mass,
         csv_path=cfg.OUTPUT_DIR / "pure_rnn_eval_log.csv",
-        best_params_path=params_path,
-        n_eval=N_EVAL)
+        best_params_path=params_path, n_eval=N_EVAL)
 
-    print(f"training {n_iter} iterations ...")
+    print(f"training {n_iter} rollouts ({T} updates each) ...")
     loss_history = np.zeros(n_iter)
     for i in range(n_iter):
         key, k_idx, k_theta = jax.random.split(key, 3)
@@ -140,18 +137,19 @@ def main():
         theta_keys = jax.random.split(k_theta, batch_size)
 
         beta = max(0.0, 1.0 - i / BETA_DECAY_ITERS)
-        params, opt_state, loss, frac_masked = train_step(
+        params, opt_state, loss, frac = train_rollout(
             params, opt_state, x_refs, u_refs, idxs, theta_keys, jnp.float32(beta))
         loss_history[i] = float(loss)
 
         if (i + 1) % LOG_EVERY == 0:
-            print(f"  iter {i + 1:5d}/{n_iter}  loss={loss:.4f}  masked={float(frac_masked):.2%}  beta={beta:.3f}")
+            print(f"  rollout {i + 1:4d}/{n_iter}  loss={float(loss):.4f}  "
+                  f"masked={float(frac):.2%}  beta={beta:.3f}")
         if EVAL_EVERY and (i + 1) % EVAL_EVERY == 0:
             eval_callback(params, i + 1)
 
     cfg.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     loss_path = cfg.OUTPUT_DIR / "pure_rnn_loss_history.npy"
-    if not params_path.exists():   # no eval checkpoint saved; fall back to the final iterate
+    if not params_path.exists():
         with open(params_path, "wb") as f:
             pickle.dump(params, f)
     np.save(loss_path, loss_history)
