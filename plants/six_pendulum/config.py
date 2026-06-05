@@ -74,6 +74,19 @@ PURE = {
 }
 
 
+# Pure RNN residual (supervised + BPTT). Per-step input: (x_t, u_{t-1}, x_ref_t, u_ref_t)
+PURE_RNN = {
+    "hidden_sizes": (128, 128),
+    "n_rollout": 2000,
+    "batch_size": 128,
+    "lr": 3e-4,
+    "n_iterations": 8000,
+    "n_iterations_supervised": 100000,
+    "grad_clip_norm": 1.0,
+    "alpha_reg": 1e-5,
+}
+
+
 # Theta estimator
 THETA = {
     "hidden_sizes": (512, 512),

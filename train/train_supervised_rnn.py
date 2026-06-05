@@ -52,7 +52,7 @@ def main():
     M = labels.shape[1]
     print(f"  N={N} trajectories, M={M} thetas, T={T} steps")
 
-    hp = cfg.PURE
+    hp = cfg.PURE_RNN
     hidden_sizes = hp["hidden_sizes"]
     batch_size = hp["batch_size"]
     lr = hp["lr"]
@@ -126,8 +126,8 @@ def main():
             print(f"  iter {i + 1:5d}/{n_iter}  loss={loss:.6f}")
 
     cfg.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    params_path = cfg.OUTPUT_DIR / "rnn_params.pkl"
-    loss_path = cfg.OUTPUT_DIR / "rnn_loss_history.npy"
+    params_path = cfg.OUTPUT_DIR / "pure_rnn_params.pkl"
+    loss_path = cfg.OUTPUT_DIR / "pure_rnn_loss_history.npy"
     with open(params_path, "wb") as f:
         pickle.dump(params, f)
     np.save(loss_path, loss_history)
