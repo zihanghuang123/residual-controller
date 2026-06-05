@@ -1,7 +1,5 @@
-"""Compute supervised residual-control labels via inverse dynamics on DR-sampled plants."""
+"""Supervised residual labels: inverse(model_theta, q_pert, qd_pert, qddot_nom) - u_nom."""
 
-import argparse
-import importlib.util
 import sys
 from pathlib import Path
 
@@ -14,27 +12,18 @@ import mujoco
 import numpy as np
 from mujoco import mjx
 
+from lib import training
 from lib.domain_randomization import apply_theta, sample_theta
 
-
-def load_config(config_path: str):
-    spec = importlib.util.spec_from_file_location("plant_cfg", config_path)
-    cfg = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(cfg)
-    return cfg
+N_THETAS = 50      # DR plants per trajectory
+SEED = 42
+NOISE_Q = 0.1      # qpos perturbation std
+NOISE_QD = 0.5     # qvel perturbation std
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", required=True)
-    parser.add_argument("--n-thetas", type=int, default=50)
-    parser.add_argument("--seed", type=int, default=42)
-    args = parser.parse_args()
-
-    cfg = load_config(args.config)
-    nq = cfg.NQ
-    nu = cfg.NU
-    n_links = cfg.N_LINKS
+    cfg = training.load_config()
+    nq, nu, n_links = cfg.NQ, cfg.NU, cfg.N_LINKS
 
     mj_model = mujoco.MjModel.from_xml_path(str(cfg.MODEL_PATH))
     mjx_model_nominal = mjx.put_model(mj_model)
@@ -51,8 +40,9 @@ def main():
     T = u_refs.shape[1]
     assert T_plus_1 == T + 1, f"x_refs has {T_plus_1} frames, u_refs has {T} controls"
 
-    key = jax.random.PRNGKey(args.seed)
-    theta_keys = jax.random.split(key, args.n_thetas)
+    key = jax.random.PRNGKey(SEED)
+    key, theta_root = jax.random.split(key)
+    theta_keys = jax.random.split(theta_root, N_THETAS)
     thetas = jnp.stack([sample_theta(k, n_links, cfg.DR_RANGES) for k in theta_keys])
 
     perturbed_models = jax.vmap(
@@ -70,20 +60,24 @@ def main():
         jax.vmap(inverse_over_time, in_axes=(0, None, None, None))
     )
 
-    qddot_noms = np.zeros((N, T, nq), dtype=np.float32)
-    u_residual_labels = np.zeros((N, args.n_thetas, T, nu), dtype=np.float32)
+    noise_keys = jax.random.split(key, N)
+    x_perturbed = np.zeros((N, T, 2 * nq), dtype=np.float32)
+    u_residual_labels = np.zeros((N, N_THETAS, T, nu), dtype=np.float32)
 
-    print(f"computing labels for {N} trajectories x {args.n_thetas} thetas x {T} steps")
+    print(f"computing labels for {N} trajectories x {N_THETAS} thetas x {T} steps")
     for i in range(N):
         q_nom = x_refs[i, :T, :nq]
         qd_nom = x_refs[i, :T, nq:]
-        qd_nom_next = x_refs[i, 1:T + 1, nq:]
-        qddot = (qd_nom_next - qd_nom) / cfg.TIMESTEP
+        qddot = (x_refs[i, 1:T + 1, nq:] - qd_nom) / cfg.TIMESTEP
         u_nom = u_refs[i]
 
-        tau_true = inverse_over_theta_time(perturbed_models, q_nom, qd_nom, qddot)
+        kq, kqd = jax.random.split(noise_keys[i])
+        q_pert = q_nom + NOISE_Q * jax.random.normal(kq, q_nom.shape)
+        qd_pert = qd_nom + NOISE_QD * jax.random.normal(kqd, qd_nom.shape)
 
-        qddot_noms[i] = np.asarray(qddot)
+        tau_true = inverse_over_theta_time(perturbed_models, q_pert, qd_pert, qddot)
+
+        x_perturbed[i] = np.asarray(jnp.concatenate([q_pert, qd_pert], axis=-1))
         u_residual_labels[i] = np.asarray(tau_true) - np.asarray(u_nom)[None, :, :]
 
         if (i + 1) % 200 == 0:
@@ -94,13 +88,13 @@ def main():
         out,
         x_refs=np.asarray(x_refs),
         u_refs=np.asarray(u_refs),
-        qddot_noms=qddot_noms,
+        x_perturbed=x_perturbed,
         thetas=np.asarray(thetas),
         u_residual_labels=u_residual_labels,
     )
     print(f"saved {out}  "
           f"({u_residual_labels.nbytes / 1e6:.1f} MB labels, "
-          f"{qddot_noms.nbytes / 1e6:.1f} MB qddot)")
+          f"{x_perturbed.nbytes / 1e6:.1f} MB x_perturbed)")
 
 
 if __name__ == "__main__":

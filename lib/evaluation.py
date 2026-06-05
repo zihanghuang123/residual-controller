@@ -13,6 +13,30 @@ from lib import losses, rollout, training
 from lib.domain_randomization import apply_theta, sample_theta
 
 
+def _eval_plants(cfg, n_traj, n_eval):
+    keys = jax.random.split(jax.random.PRNGKey(cfg.EVAL_SEED), n_eval)
+    return keys, jnp.arange(n_eval) % n_traj
+
+
+def _rollout_metrics(xs, vs, x_final, x_ref_full, nq):
+    """Shared endpoint / tracking / |v|rms tail for both rollout paths."""
+    xs_full = jnp.concatenate([xs, x_final[None]], axis=0)
+    return (losses.endpoint_error(x_final, x_ref_full[-1], nq),
+            losses.tracking_loss(xs_full, x_ref_full, nq),
+            jnp.sqrt(jnp.mean(jnp.sum(vs ** 2, axis=-1))))
+
+
+def _update_best(metric, state, params, path):
+    """Save params to path when metric beats state['best']; returns True if it was a new best."""
+    if metric >= state["best"]:
+        return False
+    state["best"] = metric
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
+        pickle.dump(params, f)
+    return True
+
+
 def make_eval_fn(cfg, mjx_model_nominal, nominal_body_mass, x_refs, u_refs, w, make_controller_fn):
     """Vmappable eval_fn(theta_key, idx) -> (endpoint, tracking_mse, vrms)."""
     T = x_refs.shape[1] - 1
@@ -26,8 +50,6 @@ def make_eval_fn(cfg, mjx_model_nominal, nominal_body_mass, x_refs, u_refs, w, m
 
         x_ref_full = x_refs[idx, :T]
         u_ref_full = u_refs[idx]
-        x_ref_for_loss = x_refs[idx] 
-        x_target = x_refs[idx, -1]
 
         x_init = x_ref_full[0]
         x_hist0, u_hist0, x_ref_hist0, u_ref_hist0 = training.pad_history(
@@ -38,12 +60,7 @@ def make_eval_fn(cfg, mjx_model_nominal, nominal_body_mass, x_refs, u_refs, w, m
         xs, _us, vs, x_final = rollout.rollout(
             mjx_model, x_init, x_ref_full, u_ref_full,
             x_hist0, u_hist0, x_ref_hist0, u_ref_hist0, controller_fn, kp, kd, T)
-        xs_full = jnp.concatenate([xs, x_final[None]], axis=0)
-
-        endpoint = losses.endpoint_error(x_final, x_target, nq)
-        tracking = losses.tracking_loss(xs_full, x_ref_for_loss, nq)
-        vrms = jnp.sqrt(jnp.mean(jnp.sum(vs ** 2, axis=-1)))
-        return endpoint, tracking, vrms
+        return _rollout_metrics(xs, vs, x_final, x_refs[idx], nq)
 
     return eval_fn
 
@@ -67,8 +84,7 @@ def evaluate_residual_controllers(
 ):
     """Run hold-out eval for a dict of {name: make_controller_fn} controllers."""
     n_traj = x_refs.shape[0]
-    theta_keys = jax.random.split(jax.random.PRNGKey(cfg.EVAL_SEED), cfg.N_EVAL_PLANTS)
-    idxs = jnp.arange(cfg.N_EVAL_PLANTS) % n_traj
+    theta_keys, idxs = _eval_plants(cfg, n_traj, cfg.N_EVAL_PLANTS)
 
     results = {}
     for name, make_controller_fn in controllers.items():
@@ -143,15 +159,10 @@ def make_eval_callback(cfg, make_controllers, target_name, w,
         tr_rms = float(np.sqrt(results[target_name][1]).mean())
         vr_mean = float(results[target_name][2].mean())
 
-        is_best = ep_target < state["best"]
-        if is_best:
-            state["best"] = ep_target
-            best_params_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(best_params_path, "wb") as f:
-                pickle.dump(params, f)
-            if best_opt_state_path is not None:
-                with open(best_opt_state_path, "wb") as f:
-                    pickle.dump(opt_state, f)
+        is_best = _update_best(ep_target, state, params, best_params_path)
+        if is_best and best_opt_state_path is not None:
+            with open(best_opt_state_path, "wb") as f:
+                pickle.dump(opt_state, f)
 
         with open(csv_path, "a") as f:
             f.write(f"{iteration},{ep_pd:.6f},{ep_target:.6f},"
@@ -161,5 +172,89 @@ def make_eval_callback(cfg, make_controllers, target_name, w,
         suffix = "  *** BEST ***" if is_best else ""
         print(f"  [eval iter {iteration:5d}] {target_name}: endpoint={ep_target:.4f}  "
               f"vs pd {ep_pd:.4f}  ({reduction:.1f}% reduction){suffix}")
+
+    return callback
+
+
+# --- RNN (GRU) residual eval: rollout_rnn, no history window ---
+
+def rnn_controller_apply(network):
+    """controller_apply(params, h, x_curr, u_prev, x_ref, u_ref) -> (h, v) for rollout_rnn."""
+    def apply(params, h, x_curr, u_prev, x_ref, u_ref):
+        return network.apply(params, h, rollout.make_rnn_step_input(x_curr, u_prev, x_ref, u_ref))
+    return apply
+
+
+def pd_controller_apply(nu):
+    """PD baseline: v=0, hidden state passed through unchanged."""
+    def apply(params, h, x_curr, u_prev, x_ref, u_ref):
+        return h, jnp.zeros(nu)
+    return apply
+
+
+def make_rnn_eval_fn(cfg, mjx_model_nominal, nominal_body_mass, controller_apply, h0, x_refs, u_refs):
+    """Vmappable eval_fn(params, theta_key, idx) -> (endpoint, tracking, vrms). params is an arg so it compiles once."""
+    T = x_refs.shape[1] - 1
+    nq = cfg.NQ
+    kp = jnp.asarray(cfg.KP)
+    kd = jnp.asarray(cfg.KD)
+
+    def eval_fn(params, theta_key, idx):
+        theta = sample_theta(theta_key, cfg.N_LINKS, cfg.DR_RANGES)
+        mjx_model = apply_theta(mjx_model_nominal, theta, nominal_body_mass, cfg.N_LINKS)
+        x_ref_full = x_refs[idx, :T]
+        u_ref_full = u_refs[idx]
+
+        def controller_fn(h, x_curr, u_prev, x_ref, u_ref):
+            return controller_apply(params, h, x_curr, u_prev, x_ref, u_ref)
+
+        xs, _us, vs, x_final = rollout.rollout_rnn(
+            mjx_model, x_ref_full[0], x_ref_full, u_ref_full, h0, controller_fn, kp, kd, T)
+        return _rollout_metrics(xs, vs, x_final, x_refs[idx], nq)
+
+    return eval_fn
+
+
+def evaluate_rnn_controllers(cfg, controllers, x_refs, u_refs, mjx_model_nominal, nominal_body_mass, name_width=10):
+    """Hold-out eval for {name: (controller_apply, params, h0)} via rollout_rnn."""
+    n_traj = x_refs.shape[0]
+    theta_keys, idxs = _eval_plants(cfg, n_traj, cfg.N_EVAL_PLANTS)
+    results = {}
+    for name, (controller_apply, params, h0) in controllers.items():
+        eval_fn = make_rnn_eval_fn(cfg, mjx_model_nominal, nominal_body_mass, controller_apply, h0, x_refs, u_refs)
+        ep, tr, vr = jax.jit(jax.vmap(eval_fn, in_axes=(None, 0, 0)))(params, theta_keys, idxs)
+        results[name] = (np.asarray(ep), np.asarray(tr), np.asarray(vr))
+        summarize(ep, tr, vr, name, width=name_width)
+    return results
+
+
+def make_rnn_eval_callback(cfg, network, h0, x_refs, u_refs, mjx_model_nominal, nominal_body_mass,
+                           csv_path, best_params_path, n_eval=64):
+    """Periodic closed-loop eval for the GRU trainer: logs CSV, saves best-endpoint params. PD baseline computed once."""
+    theta_keys, idxs = _eval_plants(cfg, x_refs.shape[0], n_eval)
+
+    rnn_eval = jax.jit(jax.vmap(make_rnn_eval_fn(
+        cfg, mjx_model_nominal, nominal_body_mass, rnn_controller_apply(network), h0, x_refs, u_refs),
+        in_axes=(None, 0, 0)))
+    pd_eval = jax.jit(jax.vmap(make_rnn_eval_fn(
+        cfg, mjx_model_nominal, nominal_body_mass, pd_controller_apply(cfg.NU), jnp.zeros(1), x_refs, u_refs),
+        in_axes=(None, 0, 0)))
+    ep_pd = float(pd_eval(jnp.zeros(1), theta_keys, idxs)[0].mean())
+
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(csv_path, "w") as f:
+        f.write("iter,endpoint_pd,endpoint_rnn,tracking_rms_rnn,vrms_rnn,is_best\n")
+    state = {"best": float("inf")}
+
+    def callback(params, iteration):
+        ep, tr, vr = rnn_eval(params, theta_keys, idxs)
+        ep_m, tr_rms, vr_m = float(ep.mean()), float(np.sqrt(tr).mean()), float(vr.mean())
+        is_best = _update_best(ep_m, state, params, best_params_path)
+        with open(csv_path, "a") as f:
+            f.write(f"{iteration},{ep_pd:.6f},{ep_m:.6f},{tr_rms:.6f},{vr_m:.6f},{int(is_best)}\n")
+        reduction = 100 * (1 - ep_m / ep_pd) if ep_pd > 0 else float("nan")
+        suffix = "  *** BEST ***" if is_best else ""
+        print(f"  [eval iter {iteration:5d}] pure_rnn endpoint={ep_m:.4f} vs pd {ep_pd:.4f} "
+              f"({reduction:.1f}% reduction){suffix}")
 
     return callback
