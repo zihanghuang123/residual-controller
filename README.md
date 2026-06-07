@@ -47,6 +47,13 @@ Each iteration sees a different combination of (trajectory, start time, plant). 
 
 At evaluation, rollouts run the **full `T` steps** to test whether each controller actually completes the task end-to-end. This train-vs-eval horizon mismatch is real and can show up as a long-horizon generalization gap (more training → larger `|v|` → compounding errors over `T > H` steps).
 
+### Choosing the BPTT horizon
+
+`H` has an **optimum** — longer is not better. For chaotic plants the BPTT gradient variance grows like `exp(2·λ·H)` (`λ` = largest closed-loop Lyapunov exponent), while the bias from truncated credit assignment stops falling once the controller stabilizes. Past a plant-dependent horizon the gradient is noise-dominated and training oscillates instead of converging (empirically the six-link GRU trains well at `H ≈ 400–500` but diverges by `H ≈ 1000`). Two scripts predict the usable range without a full sweep:
+
+- `eval/estimate_horizon.py` — measures `λ` by jvp power iteration through the PD-closed-loop dynamics; reports the Lyapunov time `τ = 1/λ` and a horizon band. Pre-training (needs no learned params).
+- `eval/grad_noise_horizon.py` — sweeps `H` and measures the gradient noise scale `tr(Cov)/‖ḡ‖²`; the trainable horizon is where it crosses `batch_size`. Constant-free and tied to your actual batch.
+
 ## Pipeline
 
 Core run order — `train/` produces artifacts, `eval/` consumes them. The `--config` flag selects the plant config; default is `plants/double_pendulum/config.py`.
@@ -74,9 +81,12 @@ Additional eval / diagnostic scripts:
 ```
 python eval/plot_trajectories.py         # TO reference sanity check (no MuJoCo)
 python eval/plot_eval_rollouts.py        # closed-loop rollout viz
-python eval/evaluate_pure.py             # pd vs pure only, adds |v|rms
+python eval/plot_residual_check.py       # u_nom / +pd / computed-torque expert sanity check
+python eval/evaluate_pure.py             # pd vs pure: metrics + endpoint/tracking box + per-traj tracking
 python eval/evaluate_oracle.py           # pd vs oracle only
 python eval/evaluate_estimator.py        # per-parameter θ R² / RMSE
+python eval/estimate_horizon.py          # Lyapunov-time BPTT horizon estimate (pre-training)
+python eval/grad_noise_horizon.py        # gradient-noise-scale horizon crossover
 ```
 
 RNN variants of the controller and estimator:
@@ -84,21 +94,21 @@ RNN variants of the controller and estimator:
 ```
 python train/train_pure_rnn.py
 python train/train_theta_estimator_rnn.py
-python eval/evaluate_pure_rnn.py
+python eval/evaluate_pure_rnn.py          # pd vs pure_rnn: metrics + endpoint/tracking box + per-traj tracking
 ```
 
 Outputs land in `cfg.OUTPUT_DIR`, which defaults to `outputs/<plant>/<config_stem>/`. Different config files on the same plant (e.g. `config.py` vs `config_big.py`) write to different output directories and can be trained in parallel on the same GPU without collision.
 
-### Sequential training queue
+### Training queue
 
-For long runs (multiple configs × controllers, overnight) use `train_queue.sh`:
+Per-host queue scripts run jobs **sequentially per GPU, GPUs in parallel**: `train_queue_bloodseeker.sh` / `train_queue_bane.sh` (2 GPUs, `GPU0`/`GPU1` arrays) and `train_queue_blob.sh` (1 GPU, `GPU0`). Each array entry is `"<command> | <log name>"` and logs to `logs/<name>.log`; an empty array leaves that GPU idle. To choose what runs, edit only the `GPU0`/`GPU1` arrays.
 
 ```
-nohup bash train_queue.sh > queue.log 2>&1 &
-disown
+tmux new -s train
+bash train_queue_bloodseeker.sh    # Ctrl+B then D to detach
 ```
 
-Edit the `JOBS` array at the top of the script to control what runs and in what order. Each job is timestamped and timed; the queue continues even if one job fails.
+Entries run in listed order, so a multi-step job is written as consecutive entries (e.g. `mkdir` / `cp trajectories` / `train`). The arrays currently run the four/six-link BPTT horizon sweep over the `plants/<plant>/hNNN.py` configs.
 
 ## Porting to a different plant
 
@@ -145,13 +155,17 @@ train/
   train_theta_estimator_rnn.py  GRU variant of θ estimator
 eval/
   evaluate.py            held-out rollouts × {pd, pure, two_model}, endpoint + tracking
-  evaluate_pure.py       pd vs pure only, adds |v|rms
+  evaluate_pure.py       pd vs pure: metrics + endpoint/tracking box + per-traj tracking plots
   evaluate_oracle.py     pd vs oracle only
-  evaluate_pure_rnn.py   pd vs pure_rnn
+  evaluate_pure_rnn.py   pd vs pure_rnn: same metrics + plots as evaluate_pure
   evaluate_estimator.py  per-parameter θ R² / RMSE
+  estimate_horizon.py    Lyapunov-time BPTT horizon estimate (jvp power iteration)
+  grad_noise_horizon.py  gradient-noise-scale horizon crossover vs batch size
   plot_final.py          loss curves + eval-metric figures
   plot_trajectories.py   TO reference sanity check (angles + cartesian strobe)
   plot_eval_rollouts.py  closed-loop rollout viz, pd vs pure
+  plot_residual_check.py u_nom / +pd / computed-torque expert sanity check
+train_queue_*.sh         per-host GPU-array queues (bloodseeker/bane: 2 GPU, blob: 1 GPU)
 outputs/<plant>/<config_stem>/  artifacts written by the pipeline
 ```
 
