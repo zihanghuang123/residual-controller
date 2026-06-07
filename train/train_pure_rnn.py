@@ -85,16 +85,30 @@ def main():
     )
     opt_state = optimizer.init(params)
 
+    params_path = cfg.OUTPUT_DIR / "pure_rnn_params.pkl"
+    opt_state_path = cfg.OUTPUT_DIR / "pure_rnn_opt_state.pkl"
+    if params_path.exists():
+        with open(params_path, "rb") as f:
+            params = pickle.load(f)
+        print(f"loaded best params from {params_path}")
+    else:
+        print("no best params; params from scratch")
+    if opt_state_path.exists():
+        with open(opt_state_path, "rb") as f:
+            opt_state = pickle.load(f)
+        print(f"loaded best opt_state from {opt_state_path}")
+    else:
+        print("no best opt_state; optimizer from scratch")
+
     loss_fn = make_loss_fn(cfg, mjx_model_nominal, nominal_body_mass, network, x_refs, u_refs)
     train_step = training.make_train_step(loss_fn, optimizer)
 
-    params_path = cfg.OUTPUT_DIR / "pure_rnn_params.pkl"
     rnn_cb = evaluation.make_rnn_eval_callback(
         cfg, network, gru_initial_state(cfg.PURE_RNN["hidden_sizes"]),
         x_refs, u_refs, mjx_model_nominal, nominal_body_mass,
         csv_path=cfg.OUTPUT_DIR / "pure_rnn_eval_log.csv",
-        best_params_path=params_path, n_eval=N_EVAL)
-    eval_callback = lambda p, o, it: rnn_cb(p, it)   # training_loop passes (params, opt_state, iter)
+        best_params_path=params_path, best_opt_state_path=opt_state_path, n_eval=N_EVAL)
+    eval_callback = lambda p, o, it: rnn_cb(p, it, o)   # pass opt_state so the best opt_state is saved too
 
     print(f"training: {cfg.PURE_RNN['n_iterations']} iterations, batch={cfg.PURE_RNN['batch_size']}, "
           f"H={H}, hidden={cfg.PURE_RNN['hidden_sizes']}")
@@ -106,9 +120,11 @@ def main():
 
     cfg.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     loss_path = cfg.OUTPUT_DIR / "pure_rnn_loss_history.npy"
-    if not params_path.exists():   # no eval checkpoint saved; fall back to the final iterate
+    if not params_path.exists():   # fallback only: no eval ever ran, so save the final iterate
         with open(params_path, "wb") as f:
             pickle.dump(params, f)
+        with open(opt_state_path, "wb") as f:
+            pickle.dump(opt_state, f)
     np.save(loss_path, loss_history)
     print(f"saved {loss_path}; best closed-loop params at {params_path}")
 

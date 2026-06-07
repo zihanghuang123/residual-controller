@@ -229,8 +229,8 @@ def evaluate_rnn_controllers(cfg, controllers, x_refs, u_refs, mjx_model_nominal
 
 
 def make_rnn_eval_callback(cfg, network, h0, x_refs, u_refs, mjx_model_nominal, nominal_body_mass,
-                           csv_path, best_params_path, n_eval=64):
-    """Periodic closed-loop eval for the GRU trainer: logs CSV, saves best-endpoint params. PD baseline computed once."""
+                           csv_path, best_params_path, n_eval=64, best_opt_state_path=None):
+    """Periodic closed-loop eval for the GRU trainer: logs CSV, saves best-endpoint params (+ opt_state). PD baseline computed once."""
     theta_keys, idxs = _eval_plants(cfg, x_refs.shape[0], n_eval)
 
     rnn_eval = jax.jit(jax.vmap(make_rnn_eval_fn(
@@ -246,10 +246,13 @@ def make_rnn_eval_callback(cfg, network, h0, x_refs, u_refs, mjx_model_nominal, 
         f.write("iter,endpoint_pd,endpoint_rnn,tracking_rms_rnn,vrms_rnn,is_best\n")
     state = {"best": float("inf")}
 
-    def callback(params, iteration):
+    def callback(params, iteration, opt_state=None):
         ep, tr, vr = rnn_eval(params, theta_keys, idxs)
         ep_m, tr_rms, vr_m = float(ep.mean()), float(np.sqrt(tr).mean()), float(vr.mean())
         is_best = _update_best(ep_m, state, params, best_params_path)
+        if is_best and opt_state is not None and best_opt_state_path is not None:
+            with open(best_opt_state_path, "wb") as f:
+                pickle.dump(opt_state, f)
         with open(csv_path, "a") as f:
             f.write(f"{iteration},{ep_pd:.6f},{ep_m:.6f},{tr_rms:.6f},{vr_m:.6f},{int(is_best)}\n")
         reduction = 100 * (1 - ep_m / ep_pd) if ep_pd > 0 else float("nan")

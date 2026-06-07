@@ -11,7 +11,6 @@ GPU0=(
 )
 
 GPU1=(
-    "python train/train_pure_rnn.py --config plants/six_pendulum/config1.py | pure_rnn_six_1"
 )
 
 trim() { local s="$*"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }

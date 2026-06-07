@@ -81,7 +81,7 @@ PURE_RNN = {
     "n_rollout": 500,
     "batch_size": 128,
     "lr": 3e-4,
-    "n_iterations": 8000,
+    "n_iterations": 10000,
     "n_iterations_supervised": 15000,
     "grad_clip_norm": 1.0,
     "alpha_reg": 1e-9,
