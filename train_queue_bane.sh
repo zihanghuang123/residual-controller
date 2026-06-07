@@ -27,7 +27,7 @@ run_gpu() {
         i=$((i + 1))
         echo "[GPU $gpu] [$(date +%H:%M:%S)] $i/$n start $name"
         local start; start=$(date +%s)
-        CUDA_VISIBLE_DEVICES=$gpu PYTHONUNBUFFERED=1 XLA_PYTHON_CLIENT_MEM_FRACTION=0.95 \
+        CUDA_VISIBLE_DEVICES=$gpu PYTHONUNBUFFERED=1 XLA_PYTHON_CLIENT_MEM_FRACTION=0.7 \
             $cmd > "$log" 2>&1
         local status=$?
         local elapsed=$(( $(date +%s) - start ))

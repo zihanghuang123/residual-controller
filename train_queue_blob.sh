@@ -7,8 +7,21 @@ set -uo pipefail
 mkdir -p logs
 
 GPU0=(
-    "python train/build_supervised_dataset.py --config plants/six_pendulum/config.py | build_dataset_six"
-    "python train/train_supervised_rnn.py     --config plants/six_pendulum/config.py | supervised_rnn_six"
+    "mkdir -p outputs/four_pendulum/h1000 | four_h1000"
+    "cp outputs/four_pendulum/config/trajectories.npz outputs/four_pendulum/h1000/trajectories.npz | four_h1000"
+    "python train/train_pure_rnn.py --config plants/four_pendulum/h1000.py | four_h1000"
+
+    "mkdir -p outputs/four_pendulum/h900 | four_h900"
+    "cp outputs/four_pendulum/config/trajectories.npz outputs/four_pendulum/h900/trajectories.npz | four_h900"
+    "python train/train_pure_rnn.py --config plants/four_pendulum/h900.py | four_h900"
+
+    "mkdir -p outputs/six_pendulum/h700 | six_h700"
+    "cp outputs/six_pendulum/config/trajectories.npz outputs/six_pendulum/h700/trajectories.npz | six_h700"
+    "python train/train_pure_rnn.py --config plants/six_pendulum/h700.py | six_h700"
+
+    "mkdir -p outputs/six_pendulum/h200 | six_h200"
+    "cp outputs/six_pendulum/config/trajectories.npz outputs/six_pendulum/h200/trajectories.npz | six_h200"
+    "python train/train_pure_rnn.py --config plants/six_pendulum/h200.py | six_h200"
 )
 
 trim() { local s="$*"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
@@ -24,7 +37,7 @@ run_gpu() {
         i=$((i + 1))
         echo "[GPU $gpu] [$(date +%H:%M:%S)] $i/$n start $name"
         local start; start=$(date +%s)
-        CUDA_VISIBLE_DEVICES=$gpu PYTHONUNBUFFERED=1 XLA_PYTHON_CLIENT_MEM_FRACTION=0.95 \
+        CUDA_VISIBLE_DEVICES=$gpu PYTHONUNBUFFERED=1 XLA_PYTHON_CLIENT_MEM_FRACTION=0.7 \
             $cmd > "$log" 2>&1
         local status=$?
         local elapsed=$(( $(date +%s) - start ))
