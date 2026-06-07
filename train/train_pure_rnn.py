@@ -4,6 +4,7 @@ The hidden state is the history, so there's no n_history knob and no padded
 history buffers.
 """
 
+import pickle
 import sys
 from pathlib import Path
 
@@ -12,11 +13,15 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
 
-from lib import losses, rollout, training
+from lib import evaluation, losses, rollout, training
 from lib.domain_randomization import apply_theta, sample_theta
 from lib.networks import GRUPureController, gru_initial_state
+
+EVAL_EVERY = 500   # closed-loop eval cadence; None disables
+N_EVAL = 200
 
 
 def init_network(cfg, key):
@@ -83,16 +88,29 @@ def main():
     loss_fn = make_loss_fn(cfg, mjx_model_nominal, nominal_body_mass, network, x_refs, u_refs)
     train_step = training.make_train_step(loss_fn, optimizer)
 
+    params_path = cfg.OUTPUT_DIR / "pure_rnn_params.pkl"
+    rnn_cb = evaluation.make_rnn_eval_callback(
+        cfg, network, gru_initial_state(cfg.PURE_RNN["hidden_sizes"]),
+        x_refs, u_refs, mjx_model_nominal, nominal_body_mass,
+        csv_path=cfg.OUTPUT_DIR / "pure_rnn_eval_log.csv",
+        best_params_path=params_path, n_eval=N_EVAL)
+    eval_callback = lambda p, o, it: rnn_cb(p, it)   # training_loop passes (params, opt_state, iter)
+
     print(f"training: {cfg.PURE_RNN['n_iterations']} iterations, batch={cfg.PURE_RNN['batch_size']}, "
           f"H={H}, hidden={cfg.PURE_RNN['hidden_sizes']}")
-    params, loss_history = training.training_loop(
+    params, opt_state, loss_history = training.training_loop(
         key, params, opt_state, train_step,
         batch_size=cfg.PURE_RNN["batch_size"], n_iterations=cfg.PURE_RNN["n_iterations"],
-        n_traj=n_traj, t0_max=T - H + 1)
+        n_traj=n_traj, t0_max=T - H + 1,
+        eval_callback=eval_callback, eval_every=EVAL_EVERY)
 
-    training.save_results(params, loss_history,
-                          cfg.OUTPUT_DIR / "pure_rnn_params.pkl",
-                          cfg.OUTPUT_DIR / "pure_rnn_loss_history.npy")
+    cfg.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    loss_path = cfg.OUTPUT_DIR / "pure_rnn_loss_history.npy"
+    if not params_path.exists():   # no eval checkpoint saved; fall back to the final iterate
+        with open(params_path, "wb") as f:
+            pickle.dump(params, f)
+    np.save(loss_path, loss_history)
+    print(f"saved {loss_path}; best closed-loop params at {params_path}")
 
 
 if __name__ == "__main__":

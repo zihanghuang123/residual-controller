@@ -76,10 +76,10 @@ PURE = {
 
 # Pure RNN residual (supervised + BPTT). Per-step input: (x_t, u_{t-1}, x_ref_t, u_ref_t)
 PURE_RNN = {
-    "hidden_sizes": (128, 128),
+    "hidden_sizes": (256, 256),
     "n_future": 200,
-    "n_rollout": 2000,
-    "batch_size": 512,
+    "n_rollout": 500,
+    "batch_size": 128,
     "lr": 3e-4,
     "n_iterations": 8000,
     "n_iterations_supervised": 15000,

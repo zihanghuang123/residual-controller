@@ -7,10 +7,11 @@ set -uo pipefail
 mkdir -p logs
 
 GPU0=(
-    "python train/train_supervised_rnn.py --config plants/six_pendulum/config.py | supervised_rnn_six"
+    "python train/train_pure_rnn.py --config plants/six_pendulum/config.py  | pure_rnn_six"
 )
 
 GPU1=(
+    "python train/train_pure_rnn.py --config plants/six_pendulum/config1.py | pure_rnn_six_1"
 )
 
 trim() { local s="$*"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
