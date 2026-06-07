@@ -261,3 +261,43 @@ def make_rnn_eval_callback(cfg, network, h0, x_refs, u_refs, mjx_model_nominal, 
               f"({reduction:.1f}% reduction){suffix}")
 
     return callback
+
+
+# --- shared eval plots (evaluate_pure.py / evaluate_pure_rnn.py) ---
+
+def plot_endpoint_tracking_box(results, target_name, n_plants, out_path):
+    """Two-panel box plot: endpoint error and tracking rms, pd vs target over held-out plants."""
+    import matplotlib.pyplot as plt
+    ep = [results["pd"][0], results[target_name][0]]
+    tr = [np.sqrt(results["pd"][1]), np.sqrt(results[target_name][1])]
+    fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+    for ax, data, ylab in zip(axes, (ep, tr), ("endpoint error", "tracking rms")):
+        ax.boxplot(data, showfliers=False)
+        ax.set_xticks([1, 2])
+        ax.set_xticklabels(["pd", target_name])
+        ax.set_ylabel(ylab)
+        ax.grid(True, alpha=0.3)
+    fig.suptitle(f"pd vs {target_name} over {n_plants} held-out plants")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
+    print(f"saved {out_path}")
+
+
+def plot_tracking(rows, t_axis, nq, out_path):
+    """Per-trajectory joint tracking. rows: [(traj_id, [(label, color, lw, states), ...]), ...]."""
+    import matplotlib.pyplot as plt
+    fig, axes = plt.subplots(len(rows), nq, figsize=(4 * nq, 2.5 * len(rows)), squeeze=False)
+    for r, (traj_id, lines) in enumerate(rows):
+        for j in range(nq):
+            ax = axes[r, j]
+            for label, color, lw, states in lines:
+                ax.plot(t_axis, states[:, j], color=color, lw=lw, label=label)
+            ax.set_title(f"traj {traj_id}, q{j + 1}")
+            ax.grid(True, alpha=0.3)
+            if r == 0 and j == 0:
+                ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=120)
+    plt.close(fig)
+    print(f"saved {out_path}")
