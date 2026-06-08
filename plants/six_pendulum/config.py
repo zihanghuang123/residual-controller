@@ -126,5 +126,5 @@ ORACLE = {
 
 
 # Evaluation
-N_EVAL_PLANTS = 200
+N_EVAL_PLANTS = 2000
 EVAL_SEED = 42
