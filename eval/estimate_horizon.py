@@ -21,7 +21,7 @@ from lib import rollout, training
 from lib.domain_randomization import apply_theta, sample_theta
 
 MEASURE_STEPS = 1500   # steps to average the exponent over (capped at T)
-N_SAMPLES = 8          # (trajectory, theta) draws to average lambda over
+N_SAMPLES = 20          # (trajectory, theta) draws to average lambda over
 SWEET_LO, SWEET_HI = 0.5, 1.5   # predicted sweet-spot band, in units of tau
 DEGRADE = 2.0                   # expect gradient degradation beyond this many tau
 

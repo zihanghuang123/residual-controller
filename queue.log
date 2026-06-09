@@ -1,0 +1,3 @@
+nohup: ignoring input
+=== queue started: Fri Jun  5 19:20:06 UTC 2026 ===
+[GPU 0] [19:20:06] 1/1 start supervised_rnn_six

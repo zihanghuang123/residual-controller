@@ -31,8 +31,8 @@ N_STEPS = int(SIM_DURATION / TIMESTEP)
 
 
 # PD gains (per-joint). Scaled to joint torque limits (39 Nm proximal, 9 Nm distal). UNTUNED.
-KP = np.array([200.0, 200.0, 200.0, 200.0, 50.0, 50.0, 50.0])
-KD = np.array([20.0, 20.0, 20.0, 20.0, 5.0, 5.0, 5.0])
+KP = np.array([400.0, 400.0, 400.0, 400.0, 100.0, 100.0, 100.0])   # ~2x stiffer
+KD = np.array([ 60.0,  60.0,  60.0,  60.0,  15.0,  15.0,  15.0]) 
 
 
 N_TRAJECTORIES = 2000

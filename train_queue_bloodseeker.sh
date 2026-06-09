@@ -8,17 +8,12 @@ set -uo pipefail
 mkdir -p logs
 
 GPU0=(
-    "python train/solve_trajectory.py --config plants/kinova/h20.py | kinova_h20"
-    "python train/train_pure_rnn.py --config plants/kinova/h20.py | kinova_h20"
-
-    "mkdir -p outputs/kinova/h100 | kinova_h100"
-    "cp outputs/kinova/h20/trajectories.npz outputs/kinova/h100/trajectories.npz | kinova_h100"
-    "python train/train_pure_rnn.py --config plants/kinova/h100.py | kinova_h100"
+    "mkdir -p outputs/kinova/h5 | kinova_h5"
+    "cp outputs/kinova/h20/trajectories.npz outputs/kinova/h5/trajectories.npz | kinova_h5"
+    "python train/train_pure_rnn.py --config plants/kinova/h5.py | kinova_h5"
 )
 
 GPU1=(
-    "python train/solve_trajectory.py --config plants/kinova/h300.py | kinova_h300"
-    "python train/train_pure_rnn.py --config plants/kinova/h300.py | kinova_h300"
 )
 
 trim() { local s="$*"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
