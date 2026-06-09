@@ -8,12 +8,19 @@ set -uo pipefail
 mkdir -p logs
 
 GPU0=(
-    "mkdir -p outputs/kinova/h5 | kinova_h5"
-    "cp outputs/kinova/h20/trajectories.npz outputs/kinova/h5/trajectories.npz | kinova_h5"
-    "python train/train_pure_rnn.py --config plants/kinova/h5.py | kinova_h5"
+    "mkdir -p outputs/kinova/h50 | kinova_h50"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h50/trajectories.npz | kinova_h50"
+    "python train/train_pure_rnn.py --config plants/kinova/h50.py | kinova_h50"
+
+    "mkdir -p outputs/kinova/h100 | kinova_h100"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h100/trajectories.npz | kinova_h100"
+    "python train/train_pure_rnn.py --config plants/kinova/h100.py | kinova_h100"
 )
 
 GPU1=(
+    "mkdir -p outputs/kinova/h160 | kinova_h160"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h160/trajectories.npz | kinova_h160"
+    "python train/train_pure_rnn.py --config plants/kinova/h160.py | kinova_h160"
 )
 
 trim() { local s="$*"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
