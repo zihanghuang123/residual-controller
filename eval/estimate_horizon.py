@@ -15,6 +15,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import jax
 import jax.numpy as jnp
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
 from mujoco import mjx
 
 from lib import rollout, training
@@ -22,8 +26,6 @@ from lib.domain_randomization import apply_theta, sample_theta
 
 MEASURE_STEPS = 1500   # steps to average the exponent over (capped at T)
 N_SAMPLES = 20          # (trajectory, theta) draws to average lambda over
-SWEET_LO, SWEET_HI = 0.5, 1.5   # predicted sweet-spot band, in units of tau
-DEGRADE = 2.0                   # expect gradient degradation beyond this many tau
 
 
 def step_fn(model, x, x_ref_t, u_ref_t, kp, kd, nq):
@@ -77,20 +79,32 @@ def main():
         lams.append(lam)
         print(f"  sample {s}: traj {idx}  lambda = {lam:+.5f} /step")
 
-    lam_mean = sum(lams) / len(lams)
-    print(f"\nmean lambda = {lam_mean:+.5f} /step")
-    if lam_mean <= 0:
-        print("closed loop is (on average) contracting: no positive exponent. Gradient blow-up, if any,\n"
-              "is from transient/non-normal growth, not asymptotic chaos -- this predictor doesn't apply.")
-        return
+    lams = np.asarray(lams)
+    finite = lams[np.isfinite(lams)]
+    n_div = int((~np.isfinite(lams)).sum())
+    lam_mean = float(finite.mean()) if finite.size else float("nan")
+    lam_med = float(np.median(finite)) if finite.size else float("nan")
 
-    tau = 1.0 / lam_mean
-    print(f"Lyapunov time tau = 1/lambda = {tau:.0f} steps  ({tau * cfg.TIMESTEP:.3f} s)")
-    print(f"predicted sweet spot ~ [{SWEET_LO * tau:.0f}, {SWEET_HI * tau:.0f}] steps; "
-          f"expect degradation beyond ~{DEGRADE * tau:.0f} steps")
-    print("\ngradient-variance amplification exp(2*lambda*H) at candidate horizons:")
-    for H in (250, 500, 1000, 2000):
-        print(f"  H={H:5d}:  x{jnp.exp(2 * lam_mean * H):.2e}")
+    def _tau(lam):
+        return f"tau = {1.0 / lam:.0f} steps ({1.0 / lam * cfg.TIMESTEP:.3f} s)" if lam > 0 else "contracting (lambda <= 0)"
+
+    print(f"\nover {finite.size} finite samples ({n_div} diverged):")
+    print(f"  mean   lambda = {lam_mean:+.5f} /step  ->  {_tau(lam_mean)}")
+    print(f"  median lambda = {lam_med:+.5f} /step  ->  {_tau(lam_med)}")
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.hist(finite, bins=30, color="tab:blue", alpha=0.8)
+    ax.axvline(lam_mean, color="tab:red", ls="--", lw=1.5, label=f"mean {lam_mean:.4f}")
+    ax.axvline(lam_med, color="tab:green", ls="--", lw=1.5, label=f"median {lam_med:.4f}")
+    ax.set_xlabel("per-plant lambda (/step)")
+    ax.set_ylabel("count")
+    ax.set_title(f"{cfg.PLANT_NAME}: per-plant lambda ({finite.size} plants, {n_div} diverged)")
+    ax.legend()
+    fig.tight_layout()
+    out = cfg.OUTPUT_DIR / "lambda_hist.png"
+    fig.savefig(out, dpi=120)
+    plt.close(fig)
+    print(f"saved {out}")
 
 
 if __name__ == "__main__":
