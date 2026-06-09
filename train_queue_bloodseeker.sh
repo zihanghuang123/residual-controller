@@ -8,19 +8,23 @@ set -uo pipefail
 mkdir -p logs
 
 GPU0=(
-    "mkdir -p outputs/kinova/h50 | kinova_h50"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h50/trajectories.npz | kinova_h50"
-    "python train/train_pure_rnn.py --config plants/kinova/h50.py | kinova_h50"
+    "mkdir -p outputs/kinova/h1300 | kinova_h1300"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h1300/trajectories.npz | kinova_h1300"
+    "python train/train_pure_rnn.py --config plants/kinova/h1300.py | kinova_h1300"
 
-    "mkdir -p outputs/kinova/h100 | kinova_h100"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h100/trajectories.npz | kinova_h100"
-    "python train/train_pure_rnn.py --config plants/kinova/h100.py | kinova_h100"
+    "mkdir -p outputs/kinova/h300 | kinova_h300"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h300/trajectories.npz | kinova_h300"
+    "python train/train_pure_rnn.py --config plants/kinova/h300.py | kinova_h300"
 )
 
 GPU1=(
-    "mkdir -p outputs/kinova/h160 | kinova_h160"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h160/trajectories.npz | kinova_h160"
-    "python train/train_pure_rnn.py --config plants/kinova/h160.py | kinova_h160"
+    "mkdir -p outputs/kinova/h1100 | kinova_h1100"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h1100/trajectories.npz | kinova_h1100"
+    "python train/train_pure_rnn.py --config plants/kinova/h1100.py | kinova_h1100"
+
+    "mkdir -p outputs/kinova/h500 | kinova_h500"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h500/trajectories.npz | kinova_h500"
+    "python train/train_pure_rnn.py --config plants/kinova/h500.py | kinova_h500"
 )
 
 trim() { local s="$*"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
