@@ -26,7 +26,7 @@ N_LINKS = 7
 
 # Trajectory horizon
 TIMESTEP = 0.002
-SIM_DURATION = 3.0
+SIM_DURATION = 5.0
 N_STEPS = int(SIM_DURATION / TIMESTEP)
 
 
@@ -85,5 +85,5 @@ PURE_RNN = {
 
 
 # Evaluation
-N_EVAL_PLANTS = 2000
+N_EVAL_PLANTS = 200
 EVAL_SEED = 42

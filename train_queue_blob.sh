@@ -7,21 +7,8 @@ set -uo pipefail
 mkdir -p logs
 
 GPU0=(
-    "mkdir -p outputs/four_pendulum/h1000 | four_h1000"
-    "cp outputs/four_pendulum/config/trajectories.npz outputs/four_pendulum/h1000/trajectories.npz | four_h1000"
-    "python train/train_pure_rnn.py --config plants/four_pendulum/h1000.py | four_h1000"
-
-    "mkdir -p outputs/four_pendulum/h900 | four_h900"
-    "cp outputs/four_pendulum/config/trajectories.npz outputs/four_pendulum/h900/trajectories.npz | four_h900"
-    "python train/train_pure_rnn.py --config plants/four_pendulum/h900.py | four_h900"
-
-    "mkdir -p outputs/six_pendulum/h700 | six_h700"
-    "cp outputs/six_pendulum/config/trajectories.npz outputs/six_pendulum/h700/trajectories.npz | six_h700"
-    "python train/train_pure_rnn.py --config plants/six_pendulum/h700.py | six_h700"
-
-    "mkdir -p outputs/six_pendulum/h200 | six_h200"
-    "cp outputs/six_pendulum/config/trajectories.npz outputs/six_pendulum/h200/trajectories.npz | six_h200"
-    "python train/train_pure_rnn.py --config plants/six_pendulum/h200.py | six_h200"
+    "python train/solve_trajectory.py --config plants/kinova/h500.py | kinova_h500"
+    "python train/train_pure_rnn.py --config plants/kinova/h500.py | kinova_h500"
 )
 
 trim() { local s="$*"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
