@@ -56,8 +56,9 @@ DR_RANGES = {
     "mass_scale": (0.7, 1.3),
     "damping": (0.0, 0.5),
     "frictionloss": (0.0, 0.2),
+    "inertia_scale": (1.0, 1.0),
 }
-THETA_DIM = 3 * N_LINKS
+THETA_DIM = 4 * N_LINKS
 
 
 # Pure MLP residual
