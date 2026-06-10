@@ -1,30 +1,19 @@
 #!/bin/bash
-# Queue jobs per GPU (bloodseeker, 2 GPUs). Fill GPU0/GPU1; entry = "<command> | <log name>".
-# Entries run sequentially per GPU; a job is its setup (solve or cp trajectories) then train.
-# Empty list -> that GPU is left idle. Logs go to logs/<name>.log.
-# tmux new -s train; bash train_queue_bloodseeker.sh; Ctrl+B then D to detach.
+# Queue jobs on GPU0 (blob, 1 GPU). Fill GPU0; entry = "<command> | <log name>".
+# Empty list -> nothing runs. Logs go to logs/<name>.log.
+# tmux new -s train; bash train_queue_blob.sh; Ctrl+B then D to detach.
 
 set -uo pipefail
 mkdir -p logs
 
 GPU0=(
-    "mkdir -p outputs/kinova/h1300 | kinova_h1300"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h1300/trajectories.npz | kinova_h1300"
-    "python train/train_pure_rnn.py --config plants/kinova/h1300.py | kinova_h1300"
-
     "mkdir -p outputs/kinova/h300 | kinova_h300"
     "cp outputs/kinova/config/trajectories.npz outputs/kinova/h300/trajectories.npz | kinova_h300"
     "python train/train_pure_rnn.py --config plants/kinova/h300.py | kinova_h300"
-)
 
-GPU1=(
-    "mkdir -p outputs/kinova/h1100 | kinova_h1100"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h1100/trajectories.npz | kinova_h1100"
-    "python train/train_pure_rnn.py --config plants/kinova/h1100.py | kinova_h1100"
-
-    "mkdir -p outputs/kinova/h500 | kinova_h500"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h500/trajectories.npz | kinova_h500"
-    "python train/train_pure_rnn.py --config plants/kinova/h500.py | kinova_h500"
+    "mkdir -p outputs/kinova/h250 | kinova_h250"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h250/trajectories.npz | kinova_h250"
+    "python train/train_pure_rnn.py --config plants/kinova/h250.py | kinova_h250"
 )
 
 trim() { local s="$*"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
@@ -55,10 +44,7 @@ run_gpu() {
 echo "=== queue started: $(date) ==="
 total_start=$(date +%s)
 
-pids=()
-[ ${#GPU0[@]} -gt 0 ] && { run_gpu 0 "${GPU0[@]}" & pids+=($!); }
-[ ${#GPU1[@]} -gt 0 ] && { run_gpu 1 "${GPU1[@]}" & pids+=($!); }
-[ ${#pids[@]} -gt 0 ] && wait "${pids[@]}"
+[ ${#GPU0[@]} -gt 0 ] && run_gpu 0 "${GPU0[@]}"
 
 total=$(( $(date +%s) - total_start ))
 echo "=== queue finished: $(date) (total $((total / 3600))h$(((total % 3600) / 60))m) ==="
