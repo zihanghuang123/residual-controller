@@ -25,7 +25,7 @@ from lib import rollout, training
 from lib.domain_randomization import apply_theta, sample_theta
 
 MEASURE_STEPS = 1500   # steps to average the exponent over (capped at T)
-N_SAMPLES = 20          # (trajectory, theta) draws to average lambda over
+N_SAMPLES = 100          # (trajectory, theta) draws to average lambda over
 
 
 def step_fn(model, x, x_ref_t, u_ref_t, kp, kd, nq):

@@ -8,23 +8,23 @@ set -uo pipefail
 mkdir -p logs
 
 GPU0=(
-    "mkdir -p outputs/kinova/h400 | kinova_h400"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h400/trajectories.npz | kinova_h400"
-    "python train/train_pure_rnn.py --config plants/kinova/h400.py | kinova_h400"
+    "mkdir -p outputs/kinova/h300 | kinova_h300"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h300/trajectories.npz | kinova_h300"
+    "python train/train_pure_rnn.py --config plants/kinova/h300.py | kinova_h300"
 
-    "mkdir -p outputs/kinova/h150 | kinova_h150"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h150/trajectories.npz | kinova_h150"
-    "python train/train_pure_rnn.py --config plants/kinova/h150.py | kinova_h150"
+    "mkdir -p outputs/kinova/h1800 | kinova_h1800"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h1800/trajectories.npz | kinova_h1800"
+    "python train/train_pure_rnn.py --config plants/kinova/h1800.py | kinova_h1800"
 )
 
 GPU1=(
-    "mkdir -p outputs/kinova/h350 | kinova_h350"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h350/trajectories.npz | kinova_h350"
-    "python train/train_pure_rnn.py --config plants/kinova/h350.py | kinova_h350"
+    "mkdir -p outputs/kinova/h600 | kinova_h600"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h600/trajectories.npz | kinova_h600"
+    "python train/train_pure_rnn.py --config plants/kinova/h600.py | kinova_h600"
 
-    "mkdir -p outputs/kinova/h200 | kinova_h200"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h200/trajectories.npz | kinova_h200"
-    "python train/train_pure_rnn.py --config plants/kinova/h200.py | kinova_h200"
+    "mkdir -p outputs/kinova/h1500 | kinova_h1500"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h1500/trajectories.npz | kinova_h1500"
+    "python train/train_pure_rnn.py --config plants/kinova/h1500.py | kinova_h1500"
 )
 
 trim() { local s="$*"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }

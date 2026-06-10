@@ -30,8 +30,8 @@ SIM_DURATION = 5.0
 N_STEPS = int(SIM_DURATION / TIMESTEP)
 
 
-KP = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0])  
-KD = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]) 
+KP = np.array([200.0, 100.0, 25.0, 6.25, 1.56, 0.39, 0.1])  
+KD = np.array([25.0, 5.0, 1.25, 0.31, 0.08, 0.02, 0.005]) 
 
 
 N_TRAJECTORIES = 2000
