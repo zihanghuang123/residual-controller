@@ -49,13 +49,7 @@ def main():
         apply_theta, in_axes=(None, 0, None, None)
     )(mjx_model_nominal, thetas, nominal_body_mass, n_links)
 
-    def inverse_step(model, qp, qv, qa):
-        d = mjx.make_data(model)
-        d = d.replace(qpos=qp, qvel=qv, qacc=qa)
-        d = mjx.inverse(model, d)
-        return d.qfrc_inverse
-
-    inverse_over_time = jax.vmap(inverse_step, in_axes=(None, 0, 0, 0))
+    inverse_over_time = jax.vmap(training.inverse_dynamics, in_axes=(None, 0, 0, 0))
     inverse_over_theta_time = jax.jit(
         jax.vmap(inverse_over_time, in_axes=(0, None, None, None))
     )

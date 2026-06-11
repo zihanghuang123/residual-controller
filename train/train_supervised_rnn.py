@@ -160,10 +160,6 @@ def main():
     optimizer = optax.chain(optax.clip_by_global_norm(grad_clip), optax.adam(lr))
     opt_state = optimizer.init(params)
 
-    def expert_torque(model, q, qd, qddot):
-        d = mjx.make_data(model).replace(qpos=q, qvel=qd, qacc=qddot)
-        return mjx.inverse(model, d).qfrc_inverse
-
     def per_example_loss(params, idx, theta_key):
         theta = sample_theta(theta_key, cfg.N_LINKS, cfg.DR_RANGES)
         model = apply_theta(mjx_model_nominal, theta, nominal_body_mass, cfg.N_LINKS)
@@ -187,7 +183,7 @@ def main():
             new_h, v = network.apply(params, h, window_input(x_curr, x_ref_pad, u_ref_pad, t, w, nq, nu))
 
             pd = kp * (x_ref_t[:nq] - q) + kd * (x_ref_t[nq:] - qd)
-            tau = expert_torque(model, q, qd, qddot_ref_t)
+            tau = training.inverse_dynamics(model, q, qd, qddot_ref_t)
             label = jax.lax.stop_gradient(tau - u_ref_t - pd)   # residual on top of u_ref + pd
             loss_t = jnp.mean((v - label) ** 2)
 

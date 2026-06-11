@@ -45,10 +45,6 @@ def main():
         _, xs = jax.lax.scan(step, d0, jnp.arange(n_steps))
         return np.asarray(xs)
 
-    def expert_torque(model, q, qd, qddot):
-        d = mjx.make_data(model).replace(qpos=q, qvel=qd, qacc=qddot)
-        return mjx.inverse(model, d).qfrc_inverse
-
     fig, axes = plt.subplots(
         N_TRAJ_SHOW * N_THETA_SHOW, nq,
         figsize=(4 * nq, 2.5 * N_TRAJ_SHOW * N_THETA_SHOW), squeeze=False)
@@ -70,7 +66,7 @@ def main():
             ol = rollout_ctrl(model, x_init, lambda t, q, qd: u_nom[t], T)
             pdc = rollout_ctrl(model, x_init,
                                lambda t, q, qd: u_nom[t] + kp * (x_ref_t[t, :nq] - q) + kd * (x_ref_t[t, nq:] - qd), T)
-            exp = rollout_ctrl(model, x_init, lambda t, q, qd: expert_torque(model, q, qd, qddot_ref[t]), T)
+            exp = rollout_ctrl(model, x_init, lambda t, q, qd: training.inverse_dynamics(model, q, qd, qddot_ref[t]), T)
 
             ol = np.vstack([np.asarray(x_init)[None], ol])
             pdc = np.vstack([np.asarray(x_init)[None], pdc])

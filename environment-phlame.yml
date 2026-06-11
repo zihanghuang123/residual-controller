@@ -22,9 +22,8 @@ dependencies:
   - ipdb=0.13.13
   - conda-forge::sundials=6.7.0
   - conda-forge::scikits.odes=2.7.0
-  - conda-forge::jax=0.4.30       # 0.4.31+ needs numpy 2.0, which breaks pinocchio 2.7.1
-  - conda-forge::jaxlib=0.4.30
-  - conda-forge::mujoco=3.2.3
+  - conda-forge::jaxlib<0.4.31
+  - conda-forge::jax<0.4.31
   - pip:
-    - nose
-    - sympy
+      - nose
+      - sympy

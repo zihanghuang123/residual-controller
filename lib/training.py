@@ -51,6 +51,12 @@ def build_mjx_model(model_path: Path):
     return mjx_model, nominal_body_mass
 
 
+def inverse_dynamics(model, q, qd, qacc):
+    """MJX inverse dynamics: torque producing qacc at (q, qd). Full model (armature, damping, gravity, Coriolis)."""
+    d = mjx.make_data(model).replace(qpos=q, qvel=qd, qacc=qacc)
+    return mjx.inverse(model, d).qfrc_inverse
+
+
 def pad_history(x_ref_t0, u_ref_t0, w):
     """Initial history buffers for MLP-style rollouts: pad with the window-start reference."""
     x_hist0 = jnp.tile(x_ref_t0, (w, 1))
