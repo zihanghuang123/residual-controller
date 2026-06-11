@@ -53,6 +53,6 @@ def apply_theta(mjx_model, theta: jnp.ndarray, nominal_body_mass: jnp.ndarray, n
     return mjx_model.replace(
         body_mass=new_body_mass,
         body_inertia=new_body_inertia,
-        dof_damping=mjx_model.dof_damping + damping_offset,
-        dof_frictionloss=mjx_model.dof_frictionloss + frictionloss_offset,
+        dof_damping=jnp.maximum(0.0, mjx_model.dof_damping + damping_offset),
+        dof_frictionloss=jnp.maximum(0.0, mjx_model.dof_frictionloss + frictionloss_offset),
     )
