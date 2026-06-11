@@ -1,18 +1,17 @@
 """AGHF (PHLAME) trajectory solver. Drop-in for solve_trajectory.py."""
 
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-import jax
-import jax.numpy as jnp
-import mujoco
 import numpy as np
-from mujoco import mjx
+import pinocchio as pin
 
 from phlame.aghf import PostAghf
+from phlame.control_extraction import compute_u_matrix_static
 from phlame.experiment import Experiment
 from phlame.parameter_set import ParameterSetBase
 
@@ -49,6 +48,16 @@ def sample_targets(cfg, n_trajectories: int, seed: int):
             np.hstack([qpos_targets, qvel_targets]))
 
 
+def mjcf_dof_dynamics(model_path: str, n: int):
+    """Per-DOF (armature, damping, frictionloss) from the MJCF named joints."""
+    joints = [j for j in ET.parse(model_path).getroot().iter("joint") if j.get("name")]
+    assert len(joints) == n, f"{len(joints)} named joints, expected {n}"
+    armature = np.array([float(j.get("armature", 0.0)) for j in joints])
+    damping = np.array([float(j.get("damping", 0.0)) for j in joints])
+    frictionloss = np.array([float(j.get("frictionloss", 0.0)) for j in joints])
+    return armature, damping, frictionloss
+
+
 def solve_one(N, t_scale, x_init, x_target, fp_urdf, t_interp, run_name):
     """Solve one AGHF problem. Returns (q, qd_phys, qdd_phys, t_solve)."""
     j_type = (2 * np.ones((N, 1))).astype(np.double, order="F")
@@ -73,12 +82,6 @@ def solve_one(N, t_scale, x_init, x_target, fp_urdf, t_interp, run_name):
     return q, qd / t_scale, qdd / (t_scale ** 2), result.t_solve
 
 
-def inverse_step(model, qp, qv, qa):
-    """Full MJX inverse dynamics (armature, damping, gravity, Coriolis) -> u_ref."""
-    d = mjx.make_data(model).replace(qpos=qp, qvel=qv, qacc=qa)
-    return mjx.inverse(model, d).qfrc_inverse
-
-
 def main() -> None:
     cfg = training.load_config()
     N = cfg.NQ
@@ -86,9 +89,8 @@ def main() -> None:
     t_scale = T / 2.0
     fp_urdf = str(cfg.PHLAME_URDF)
 
-    mj_model = mujoco.MjModel.from_xml_path(str(cfg.MODEL_PATH))
-    mjx_nominal = mjx.put_model(mj_model)
-    inverse_over_time = jax.jit(jax.vmap(inverse_step, in_axes=(None, 0, 0, 0)))
+    pin_model = pin.buildModelFromUrdf(fp_urdf)  # rigid body == MJCF
+    armature, damping, frictionloss = mjcf_dof_dynamics(str(cfg.MODEL_PATH), N)
 
     t_interp = np.linspace(-1.0, 1.0, cfg.N_STEPS + 1)
     x_inits, x_targets = sample_targets(cfg, cfg.N_TRAJECTORIES, cfg.TRAJECTORY_SAMPLE_SEED)
@@ -106,8 +108,9 @@ def main() -> None:
                 N, t_scale, x_inits[i], x_targets[i], fp_urdf, t_interp,
                 run_name=f"{cfg.PLANT_NAME}_{i:04d}",
             )
-            u = np.asarray(inverse_over_time(
-                mjx_nominal, jnp.asarray(q), jnp.asarray(qd), jnp.asarray(qdd)))
+            # full inverse dynamics: rigid-body rnea + armature + damping + Coulomb friction
+            u = compute_u_matrix_static(q, qd, qdd, pin_model)
+            u = u + qdd * armature + qd * damping + np.sign(qd) * frictionloss
             x_refs[i, :, :N] = q
             x_refs[i, :, N:] = qd
             u_refs[i] = u[:-1]
