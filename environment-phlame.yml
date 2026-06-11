@@ -1,0 +1,30 @@
+# Conda env for the PHLAME AGHF solver (train/solve_trajectory_phlame.py).
+# Separate from environment.yml (the training env): aghf_pybind is built against
+# pinocchio 2.7.1, which pins numpy 1.26.4, which caps jax at 0.4.30. Everything is
+# resolved by conda-forge in one solve so no pip wheel clobbers the ABI-linked stack.
+# mujoco-mjx is pure-python jax code -> installed post-create with `pip --no-deps`.
+name: phlame
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11.7
+  - matplotlib
+  - tqdm
+  - numpy=1.26.4
+  - pandas=2.2.2
+  - pebble=5.0.7
+  - pip
+  - scipy=1.13.1
+  - conda-forge::pinocchio=2.7.1
+  - cmake
+  - pybind11=2.12.0
+  - ipdb=0.13.13
+  - conda-forge::sundials=6.7.0
+  - conda-forge::scikits.odes=2.7.0
+  - conda-forge::jax=0.4.30       # 0.4.31+ needs numpy 2.0, which breaks pinocchio 2.7.1
+  - conda-forge::jaxlib=0.4.30
+  - conda-forge::mujoco=3.2.3
+  - pip:
+    - nose
+    - sympy
