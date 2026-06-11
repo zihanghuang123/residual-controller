@@ -1,7 +1,7 @@
 <mujoco model="kinova_gen3">
   <compiler angle="radian" meshdir="assets/meshes"/>
 
-  <option integrator="implicitfast" timestep="0.002" gravity="0 0 -9.81"/>
+  <option integrator="implicitfast" timestep="0.002" gravity="0 0 -9.81" iterations="1"/>
 
   <default>
     <default class="visual">
