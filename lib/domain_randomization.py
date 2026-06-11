@@ -2,8 +2,8 @@
 
 Theta layout (flat vector, length 4 * n_links):
     [0 .. n_links)              -- mass_scale per link
-    [n_links .. 2*n_links)      -- damping per link
-    [2*n_links .. 3*n_links)    -- frictionloss per link
+    [n_links .. 2*n_links)      -- damping offset per link
+    [2*n_links .. 3*n_links)    -- frictionloss offset per link
     [3*n_links .. 4*n_links)    -- inertia_scale per link
 """
 
@@ -40,8 +40,8 @@ def sample_theta(key: jax.Array, n_links: int, dr_ranges: dict) -> jnp.ndarray:
 def apply_theta(mjx_model, theta: jnp.ndarray, nominal_body_mass: jnp.ndarray, n_links: int):
     """Return a new mjx.Model with theta applied."""
     mass_scale = theta[:n_links]
-    damping = theta[n_links:2 * n_links]
-    frictionloss = theta[2 * n_links:3 * n_links]
+    damping_offset = theta[n_links:2 * n_links]
+    frictionloss_offset = theta[2 * n_links:3 * n_links]
     inertia_scale = theta[3 * n_links:4 * n_links]
 
     # Links are the last n_links bodies (skip world + any fixed base).
@@ -53,6 +53,6 @@ def apply_theta(mjx_model, theta: jnp.ndarray, nominal_body_mass: jnp.ndarray, n
     return mjx_model.replace(
         body_mass=new_body_mass,
         body_inertia=new_body_inertia,
-        dof_damping=damping,
-        dof_frictionloss=frictionloss,
+        dof_damping=mjx_model.dof_damping + damping_offset,
+        dof_frictionloss=mjx_model.dof_frictionloss + frictionloss_offset,
     )

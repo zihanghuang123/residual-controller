@@ -13,6 +13,7 @@ import numpy as np
 HERE = Path(__file__).parent
 PROJECT_ROOT = HERE.parent.parent
 MODEL_PATH = HERE / "kinova_gen3.xml"
+PHLAME_URDF = HERE / "kinova.urdf"
 PLANT_NAME = HERE.name
 OUTPUT_DIR = PROJECT_ROOT / "outputs" / PLANT_NAME / Path(__file__).stem
 
@@ -51,8 +52,8 @@ TO_COST_X_TERMINAL = 100.0
 # Domain randomization
 DR_RANGES = {
     "mass_scale": (0.7, 1.3),
-    "damping": (0.0, 0.5),
-    "frictionloss": (0.0, 0.2),
+    "damping": (-0.25, 0.25),
+    "frictionloss": (-0.1, 0.1),
     "inertia_scale": (0.7, 1.3),
 }
 THETA_DIM = 4 * N_LINKS

@@ -1,44 +1,39 @@
-"""PHLAME-based replacement for solve_trajectory.py. Generates an MJCF-matched URDF on the fly and writes trajectories.npz in the same format."""
+"""AGHF (PHLAME) trajectory solver. Drop-in for solve_trajectory.py."""
 
-import argparse
-import importlib.util
-import os
 import sys
-import tempfile
-from types import ModuleType
+from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+import jax
+import jax.numpy as jnp
+import mujoco
 import numpy as np
+from mujoco import mjx
 
 from phlame.aghf import PostAghf
-from phlame.parameter_set import ParameterSetBase
 from phlame.experiment import Experiment
+from phlame.parameter_set import ParameterSetBase
+
+from lib import training
 
 
-LINK_LENGTH = 1.0
-LINK_MASS = 1.0
-COM_OFFSET = 1.0
-
-PHLAME_T_SIM = 2.0
-
+# AGHF settings (from PHLAME/examples/kinova.py)
 P_NODES = 7
-K_PENALTY = 1e3
-S_MAX = 10
-ABS_TOL = 1e-10
-REL_TOL = 1e-10
+K_PENALTY = 1e4
+S_MAX = 1
+ABS_TOL = 1e-4
+REL_TOL = 1e-4
 METHOD_NAME = "cvode"
-MAX_STEPS = 1e4
+MAX_STEPS = int(1e8)
 NS_POINTS = int(1e2)
-TIMEOUT_SEC = 60
-
-
-def load_config(config_path: str) -> ModuleType:
-    spec = importlib.util.spec_from_file_location("plant_config", config_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+TIMEOUT_SEC = 200
+USE_JACOBIAN = True
 
 
 def sample_targets(cfg, n_trajectories: int, seed: int):
+    """Same sampling as solve_trajectory.py (shared seed -> shared BCs)."""
     rng = np.random.default_rng(seed)
     qpos_init_lo, qpos_init_hi = cfg.INITIAL_QPOS_RANGE
     qpos_target_lo, qpos_target_hi = cfg.TARGET_QPOS_RANGE
@@ -54,126 +49,73 @@ def sample_targets(cfg, n_trajectories: int, seed: int):
             np.hstack([qpos_targets, qvel_targets]))
 
 
-def generate_matched_urdf(n_links: int, name: str) -> str:
-    """URDF mirroring the MJCF: -z chain, unit-mass links, COM at link end, y-axis hinges."""
-    parts = [f'<?xml version="1.0" encoding="utf-8"?>\n<robot name="{name}">\n']
+def solve_one(N, t_scale, x_init, x_target, fp_urdf, t_interp, run_name):
+    """Solve one AGHF problem. Returns (q, qd_phys, qdd_phys, t_solve)."""
+    j_type = (2 * np.ones((N, 1))).astype(np.double, order="F")
 
-    parts.append(
-        '  <link name="link_0">\n'
-        '    <inertial><origin xyz="0 0 0"/><mass value="0"/>'
-        '<inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/></inertial>\n'
-        '  </link>\n'
-    )
-    for i in range(1, n_links + 1):
-        parts.append(
-            f'  <link name="link_{i}">\n'
-            f'    <inertial><origin xyz="0 0 -{COM_OFFSET}"/><mass value="{LINK_MASS}"/>'
-            '<inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/></inertial>\n'
-            '  </link>\n'
-        )
-    parts.append(
-        '  <link name="link_end">\n'
-        '    <inertial><origin xyz="0 0 0"/><mass value="0"/>'
-        '<inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/></inertial>\n'
-        '  </link>\n'
-    )
-
-    parts.append(
-        '  <joint name="joint_1" type="revolute">\n'
-        '    <parent link="link_0"/><child link="link_1"/>\n'
-        '    <origin xyz="0 0 0"/>\n'
-        '    <axis xyz="0 1 0"/>\n'
-        '    <limit lower="-99999" upper="99999" effort="99999" velocity="99999"/>\n'
-        '  </joint>\n'
-    )
-    for i in range(2, n_links + 1):
-        parts.append(
-            f'  <joint name="joint_{i}" type="revolute">\n'
-            f'    <parent link="link_{i-1}"/><child link="link_{i}"/>\n'
-            f'    <origin xyz="0 0 -{LINK_LENGTH}"/>\n'
-            '    <axis xyz="0 1 0"/>\n'
-            '    <limit lower="-99999" upper="99999" effort="99999" velocity="99999"/>\n'
-            '  </joint>\n'
-        )
-    parts.append(
-        '  <joint name="joint_end" type="fixed">\n'
-        f'    <parent link="link_{n_links}"/><child link="link_end"/>\n'
-        f'    <origin xyz="0 0 -{LINK_LENGTH}"/>\n'
-        '  </joint>\n'
-    )
-    parts.append('</robot>\n')
-    return "".join(parts)
-
-
-def solve_one_phlame(N: int, x_init: np.ndarray, x_target: np.ndarray,
-                     fp_urdf: str, dt: float, run_name: str):
-    """Return (q, qd, qdd, t_solve) with shapes (N, T+1) for q/qd/qdd."""
-    j_type = (2 * np.ones((N, 1))).astype(np.double, order='F')
-    X0 = np.hstack([x_init[:N], x_init[N:]]).reshape(-1, 1).astype(np.double, order='F')
-    Xf = np.hstack([x_target[:N], x_target[N:]]).reshape(-1, 1).astype(np.double, order='F')
+    # velocity BCs: physical -> normalized time
+    X0 = x_init.astype(np.double).copy(); X0[N:] *= t_scale
+    Xf = x_target.astype(np.double).copy(); Xf[N:] *= t_scale
+    X0 = X0.reshape(-1, 1).copy(order="F")
+    Xf = Xf.reshape(-1, 1).copy(order="F")
 
     pset = ParameterSetBase(
-        P_NODES, N, X0, Xf, run_name, S_MAX, K_PENALTY,
-        ABS_TOL, REL_TOL, METHOD_NAME, MAX_STEPS, NS_POINTS,
-        j_type, fp_urdf,
+        p=P_NODES, N=N, X0=X0, Xf=Xf, name=run_name, s_max=S_MAX, k=K_PENALTY,
+        abs_tol=ABS_TOL, rel_tol=REL_TOL, method_name=METHOD_NAME, max_steps=MAX_STEPS,
+        ns_points=NS_POINTS, j_type=j_type, fp_urdf=fp_urdf,
     )
     result = Experiment.run_single_static(
-        pset, TIMEOUT_SEC, mode="general",
-        use_jacobian=False, print_debug=False,
+        pset=pset, timeout=TIMEOUT_SEC, use_jacobian=USE_JACOBIAN, print_debug=False,
     )
 
     post = PostAghf(result)
-    ps_values_fin = post.first_result.sol[-1, :].reshape(-1, 1)
-    n_points = int(PHLAME_T_SIM / dt) + 1
-    t_interp = np.linspace(-1, 1, n_points)
-    q, qd, qdd = post.get_q_qd_qdd(ps_values_fin, t_interp)
-    return q, qd, qdd, result.t_solve
+    q, qd, qdd = post.get_q_qd_qdd(result.sol[-1, :], t_interp)
+    return q, qd / t_scale, qdd / (t_scale ** 2), result.t_solve
+
+
+def inverse_step(model, qp, qv, qa):
+    """Full MJX inverse dynamics (armature, damping, gravity, Coriolis) -> u_ref."""
+    d = mjx.make_data(model).replace(qpos=qp, qvel=qv, qacc=qa)
+    return mjx.inverse(model, d).qfrc_inverse
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, required=True)
-    args = parser.parse_args()
-
-    cfg = load_config(args.config)
+    cfg = training.load_config()
     N = cfg.NQ
+    T = cfg.SIM_DURATION
+    t_scale = T / 2.0
+    fp_urdf = str(cfg.PHLAME_URDF)
 
-    if abs(cfg.SIM_DURATION - PHLAME_T_SIM) > 1e-6:
-        print(f"ERROR: cfg.SIM_DURATION={cfg.SIM_DURATION} but PHLAME requires {PHLAME_T_SIM}")
-        sys.exit(1)
+    mj_model = mujoco.MjModel.from_xml_path(str(cfg.MODEL_PATH))
+    mjx_nominal = mjx.put_model(mj_model)
+    inverse_over_time = jax.jit(jax.vmap(inverse_step, in_axes=(None, 0, 0, 0)))
 
-    urdf_str = generate_matched_urdf(N, name=cfg.PLANT_NAME)
-    tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.urdf', delete=False)
-    tmp.write(urdf_str)
-    tmp.close()
-    fp_urdf = tmp.name
-    print(f"generated matched URDF: {fp_urdf}  (N={N})")
-
+    t_interp = np.linspace(-1.0, 1.0, cfg.N_STEPS + 1)
     x_inits, x_targets = sample_targets(cfg, cfg.N_TRAJECTORIES, cfg.TRAJECTORY_SAMPLE_SEED)
 
-    n_steps_plus_1 = int(PHLAME_T_SIM / cfg.TIMESTEP) + 1
-    x_refs = np.zeros((cfg.N_TRAJECTORIES, n_steps_plus_1, 2 * N))
-    u_refs = np.zeros((cfg.N_TRAJECTORIES, n_steps_plus_1 - 1, N))
-    converged_flags = np.zeros(cfg.N_TRAJECTORIES, dtype=bool)
+    x_refs = np.zeros((cfg.N_TRAJECTORIES, cfg.N_STEPS + 1, 2 * N))
+    u_refs = np.zeros((cfg.N_TRAJECTORIES, cfg.N_STEPS, N))
+    converged = np.zeros(cfg.N_TRAJECTORIES, dtype=bool)
     solve_times = np.zeros(cfg.N_TRAJECTORIES)
 
-    print(f"sampling {cfg.N_TRAJECTORIES} trajectories with PHLAME "
-          f"({N} links, T={PHLAME_T_SIM}s, dt={cfg.TIMESTEP})")
+    print(f"AGHF: {cfg.N_TRAJECTORIES} trajectories, N={N}, T={T}s, dt={cfg.TIMESTEP}")
 
     for i in range(cfg.N_TRAJECTORIES):
         try:
-            q, qd, qdd, t_solve = solve_one_phlame(
-                N, x_inits[i], x_targets[i], fp_urdf,
-                dt=cfg.TIMESTEP,
-                run_name=f"{cfg.PLANT_NAME}_traj_{i:03d}",
+            q, qd, qdd, t_solve = solve_one(
+                N, t_scale, x_inits[i], x_targets[i], fp_urdf, t_interp,
+                run_name=f"{cfg.PLANT_NAME}_{i:04d}",
             )
-            x_refs[i, :, :N] = q.T
-            x_refs[i, :, N:] = qd.T
-            converged_flags[i] = True
+            u = np.asarray(inverse_over_time(
+                mjx_nominal, jnp.asarray(q), jnp.asarray(qd), jnp.asarray(qdd)))
+            x_refs[i, :, :N] = q
+            x_refs[i, :, N:] = qd
+            u_refs[i] = u[:-1]
+            converged[i] = True
             solve_times[i] = t_solve
-            print(f"  traj {i+1:3d}/{cfg.N_TRAJECTORIES}  OK  ({t_solve:.2f}s)")
+            print(f"  {i + 1:4d}/{cfg.N_TRAJECTORIES}  OK  ({t_solve:.2f}s)")
         except Exception as e:
-            print(f"  traj {i+1:3d}/{cfg.N_TRAJECTORIES}  FAIL: {type(e).__name__}: {e}")
+            print(f"  {i + 1:4d}/{cfg.N_TRAJECTORIES}  FAIL: {type(e).__name__}: {e}")
 
     cfg.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     output_path = cfg.OUTPUT_DIR / "trajectories.npz"
@@ -183,17 +125,13 @@ def main() -> None:
         u_refs=u_refs,
         x_inits=x_inits,
         x_targets=x_targets,
-        converged=converged_flags,
+        converged=converged,
         solve_times=solve_times,
     )
-    n_ok = int(converged_flags.sum())
-    avg_t = float(solve_times[converged_flags].mean()) if n_ok > 0 else 0.0
-    total_t = float(solve_times.sum())
+    n_ok = int(converged.sum())
+    avg_t = float(solve_times[converged].mean()) if n_ok else 0.0
     print(f"\nsaved {output_path}")
-    print(f"converged {n_ok}/{cfg.N_TRAJECTORIES}, "
-          f"avg solve time {avg_t:.2f}s, total wall time {total_t:.1f}s")
-
-    os.unlink(fp_urdf)
+    print(f"converged {n_ok}/{cfg.N_TRAJECTORIES}, avg solve {avg_t:.2f}s")
 
 
 if __name__ == "__main__":
