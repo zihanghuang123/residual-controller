@@ -87,12 +87,12 @@
   </worldbody>
 
   <actuator>
-    <motor name="joint_1" joint="joint_1" ctrllimited="true" ctrlrange="-39 39"/>
-    <motor name="joint_2" joint="joint_2" ctrllimited="true" ctrlrange="-39 39"/>
-    <motor name="joint_3" joint="joint_3" ctrllimited="true" ctrlrange="-39 39"/>
-    <motor name="joint_4" joint="joint_4" ctrllimited="true" ctrlrange="-39 39"/>
-    <motor name="joint_5" joint="joint_5" ctrllimited="true" ctrlrange="-9 9"/>
-    <motor name="joint_6" joint="joint_6" ctrllimited="true" ctrlrange="-9 9"/>
-    <motor name="joint_7" joint="joint_7" ctrllimited="true" ctrlrange="-9 9"/>
+    <motor name="joint_1" joint="joint_1" ctrllimited="true" ctrlrange="-400 400"/>
+    <motor name="joint_2" joint="joint_2" ctrllimited="true" ctrlrange="-400 400"/>
+    <motor name="joint_3" joint="joint_3" ctrllimited="true" ctrlrange="-400 400"/>
+    <motor name="joint_4" joint="joint_4" ctrllimited="true" ctrlrange="-400 400"/>
+    <motor name="joint_5" joint="joint_5" ctrllimited="true" ctrlrange="-400 400"/>
+    <motor name="joint_6" joint="joint_6" ctrllimited="true" ctrlrange="-400 400"/>
+    <motor name="joint_7" joint="joint_7" ctrllimited="true" ctrlrange="-400 400"/>
   </actuator>
 </mujoco>
