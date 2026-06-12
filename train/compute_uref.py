@@ -51,7 +51,10 @@ def main() -> None:
     np.savez(traj_path, **data)
     conv = data["converged"].astype(bool)
     print(f"wrote u_refs {u_refs.shape} into {traj_path}")
-    print(f"max |u_ref| over converged: {np.abs(u_refs[conv]).max():.1f}")
+    u_lim = np.where(mj_model.actuator_ctrllimited.astype(bool), mj_model.actuator_ctrlrange[:, 1], np.inf)
+    u_abs = np.abs(u_refs[conv])
+    print(f"per-joint max |u_ref|: {u_abs.max(axis=(0, 1)).round(1)} (ctrl limit {u_lim})")
+    print(f"steps over limit: {100.0 * (u_abs > u_lim).mean():.2f}%")
 
 
 if __name__ == "__main__":

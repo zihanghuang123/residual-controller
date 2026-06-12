@@ -54,13 +54,21 @@ def build_problem(cfg, model: pin.Model,
     running_action = crocoddyl.IntegratedActionModelEuler(running_diff, cfg.TIMESTEP)
     terminal_action = crocoddyl.IntegratedActionModelEuler(terminal_diff, 0.0)
 
+    u_max = getattr(cfg, "TO_U_MAX", None)
+    if u_max is not None:
+        running_action.u_lb = -u_max
+        running_action.u_ub = u_max
+
     return crocoddyl.ShootingProblem(x_init, [running_action] * cfg.N_STEPS, terminal_action)
 
 
 def solve_one(cfg, model: pin.Model, x_init: np.ndarray, x_target: np.ndarray):
     """Solve one TO. Returns (xs, us, converged)."""
     problem = build_problem(cfg, model, x_init, x_target)
-    solver = crocoddyl.SolverFDDP(problem)
+    if getattr(cfg, "TO_U_MAX", None) is not None:
+        solver = crocoddyl.SolverBoxFDDP(problem)
+    else:
+        solver = crocoddyl.SolverFDDP(problem)
 
     nu = problem.runningModels[0].nu
     xs_init = [(1.0 - k / cfg.N_STEPS) * x_init + (k / cfg.N_STEPS) * x_target

@@ -24,6 +24,14 @@ def make_initial_data(mjx_model, qpos: jnp.ndarray, qvel: jnp.ndarray):
     return mjx.forward(mjx_model, d)
 
 
+def _ctrl_limits(mjx_model):
+    """(lo, hi) from ctrlrange; +/-inf where unlimited. Matches MJX's internal ctrl clamp."""
+    limited = mjx_model.actuator_ctrllimited.astype(bool)
+    lo = jnp.where(limited, mjx_model.actuator_ctrlrange[:, 0], -jnp.inf)
+    hi = jnp.where(limited, mjx_model.actuator_ctrlrange[:, 1], jnp.inf)
+    return lo, hi
+
+
 def make_network_input(x_hist_full: jnp.ndarray,
                        u_hist: jnp.ndarray,
                        x_ref_window: Optional[jnp.ndarray] = None,
@@ -55,6 +63,7 @@ def rollout(mjx_model,
     """Roll out closed-loop control under MJX."""
     nq = mjx_model.nq
     d0 = make_initial_data(mjx_model, x_init[:nq], x_init[nq:])
+    u_lo, u_hi = _ctrl_limits(mjx_model)
 
     def step(carry, t):
         d, x_hist, u_hist, x_ref_hist, u_ref_hist = carry
@@ -69,7 +78,7 @@ def rollout(mjx_model,
 
         v = controller_fn(x_hist_full, u_hist, x_ref_window, u_ref_window)
         pd = kp * (x_ref[:nq] - d.qpos) + kd * (x_ref[nq:] - d.qvel)
-        u = u_ref + pd + v
+        u = jnp.clip(u_ref + pd + v, u_lo, u_hi)
 
         d = d.replace(ctrl=u)
         d = mjx.step(mjx_model, d)
@@ -118,6 +127,7 @@ def rollout_rnn(mjx_model,
     nu = mjx_model.nu
     d0 = make_initial_data(mjx_model, x_init[:nq], x_init[nq:])
     u_prev0 = jnp.zeros(nu)
+    u_lo, u_hi = _ctrl_limits(mjx_model)
 
     def step(carry, t):
         d, h, u_prev = carry
@@ -127,7 +137,7 @@ def rollout_rnn(mjx_model,
 
         new_h, v = controller_fn(h, x_curr, u_prev, x_ref, u_ref)
         pd = kp * (x_ref[:nq] - d.qpos) + kd * (x_ref[nq:] - d.qvel)
-        u = u_ref + pd + v
+        u = jnp.clip(u_ref + pd + v, u_lo, u_hi)
 
         d = d.replace(ctrl=u)
         d = mjx.step(mjx_model, d)

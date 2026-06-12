@@ -31,15 +31,22 @@ SIM_DURATION = 5.0
 N_STEPS = int(SIM_DURATION / TIMESTEP)
 
 
-KP = np.array([200.0, 100.0, 25.0, 6.25, 1.56, 0.39, 0.1])  
-KD = np.array([25.0, 5.0, 1.25, 0.31, 0.08, 0.02, 0.005]) 
+KP = np.array([80.0, 80.0, 80.0, 80.0, 18.0, 18.0, 18.0])  
+KD = np.array([35.0, 35.0, 35.0, 35.0, 12.0, 12.0, 12.0]) 
 
+
+# kinova.urdf limits (MJCF ctrlrange matches U_MAX)
+U_MAX = np.array([39.0, 39.0, 39.0, 39.0, 9.0, 9.0, 9.0])
+TO_U_MAX = 0.85 * U_MAX
+QPOS_LIMIT = np.array([6.28, 2.25, 6.28, 2.58, 6.28, 2.1, 6.28])
+QVEL_LIMIT = np.array([1.3963, 1.3963, 1.3963, 1.3963, 1.2218, 1.2218, 1.2218])
+_SAMPLE_QPOS = np.minimum(QPOS_LIMIT, np.pi)
 
 N_TRAJECTORIES = 2000
-INITIAL_QPOS_RANGE = (np.full(N_LINKS, -np.pi), np.full(N_LINKS, np.pi))
-TARGET_QPOS_RANGE = (np.full(N_LINKS, -np.pi), np.full(N_LINKS, np.pi))
-INITIAL_QVEL_RANGE = (np.full(N_LINKS, -3.0), np.full(N_LINKS, 3.0))
-TARGET_QVEL_RANGE = (np.full(N_LINKS, -3.0), np.full(N_LINKS, 3.0))
+INITIAL_QPOS_RANGE = (-_SAMPLE_QPOS, _SAMPLE_QPOS)
+TARGET_QPOS_RANGE = (-_SAMPLE_QPOS, _SAMPLE_QPOS)
+INITIAL_QVEL_RANGE = (-QVEL_LIMIT, QVEL_LIMIT)
+TARGET_QVEL_RANGE = (-QVEL_LIMIT, QVEL_LIMIT)
 TRAJECTORY_SAMPLE_SEED = 42
 
 
