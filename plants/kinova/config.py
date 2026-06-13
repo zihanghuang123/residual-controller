@@ -88,6 +88,8 @@ PURE_RNN = {
     "n_iterations": 20000,
     "grad_clip_norm": 1.0,
     "alpha_reg": 1e-9,
+    "lookahead_points": 10,
+    "lookahead_stride": 30,
 }
 
 

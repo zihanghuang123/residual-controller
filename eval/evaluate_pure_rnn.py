@@ -20,9 +20,9 @@ from lib.networks import GRUPureController, gru_initial_state
 N_SHOW = 3   # trajectories to plot
 
 
-def rollout_states(model, x_ref, u_ref, h0, controller_fn, kp, kd, T):
+def rollout_states(model, x_ref, u_ref, h0, controller_fn, kp, kd, T, preview=None):
     """Closed-loop rollout -> (T+1, 2nq) state array (open-loop = PD controller with kp=kd=0)."""
-    xs, _us, _vs, x_final = rollout.rollout_rnn(model, x_ref[0], x_ref, u_ref, h0, controller_fn, kp, kd, T)
+    xs, _us, _vs, x_final = rollout.rollout_rnn(model, x_ref[0], x_ref, u_ref, h0, controller_fn, kp, kd, T, preview=preview)
     return np.asarray(jnp.concatenate([xs, x_final[None]], axis=0))
 
 
@@ -64,6 +64,8 @@ def main():
     t_axis = np.arange(T + 1) * cfg.TIMESTEP
     pd_ctrl = lambda h, *a: pd_apply(None, h, *a)              # open-loop and pd differ only in gains
     rnn_ctrl = lambda h, *a: rnn_apply(pure_params, h, *a)
+    n_points = cfg.PURE_RNN.get("lookahead_points", 0)
+    stride = cfg.PURE_RNN.get("lookahead_stride", 1)
 
     rows = []
     for row in range(N_SHOW):
@@ -72,9 +74,11 @@ def main():
         x_ref = x_refs[row, :T]
         u_ref = u_refs[row]
         x_nom = np.asarray(x_refs[row])
+        preview = None if n_points == 0 else rollout.build_preview_window(
+            jnp.asarray(x_refs[row]), jnp.asarray(u_refs[row]), 0, T, n_points, stride)
         ol = rollout_states(model, x_ref, u_ref, jnp.zeros(1), pd_ctrl, zero_gain, zero_gain, T)
         pdc = rollout_states(model, x_ref, u_ref, jnp.zeros(1), pd_ctrl, kp, kd, T)
-        rnnc = rollout_states(model, x_ref, u_ref, h0, rnn_ctrl, kp, kd, T)
+        rnnc = rollout_states(model, x_ref, u_ref, h0, rnn_ctrl, kp, kd, T, preview=preview)
         rows.append((row, [("reference", "k", 1.5, x_nom),
                            ("u_nom", "tab:red", 1.0, ol),
                            ("u_nom + pd", "tab:blue", 1.0, pdc),

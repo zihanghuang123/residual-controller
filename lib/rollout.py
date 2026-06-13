@@ -101,7 +101,8 @@ def make_rnn_step_input(x_curr: jnp.ndarray,
                         u_prev: jnp.ndarray,
                         x_ref: Optional[jnp.ndarray] = None,
                         u_ref: Optional[jnp.ndarray] = None,
-                        theta_estimate: Optional[jnp.ndarray] = None) -> jnp.ndarray:
+                        theta_estimate: Optional[jnp.ndarray] = None,
+                        preview: Optional[jnp.ndarray] = None) -> jnp.ndarray:
     """Per-step feature vector for an RNN."""
     parts = [x_curr, u_prev]
     if x_ref is not None:
@@ -110,7 +111,19 @@ def make_rnn_step_input(x_curr: jnp.ndarray,
         parts.append(u_ref)
     if theta_estimate is not None:
         parts.append(theta_estimate)
+    if preview is not None:
+        parts.append(preview)
     return jnp.concatenate(parts)
+
+
+def build_preview_window(x_refs, u_refs, t0, n_steps, n_points, stride):
+    """Strided future (x_ref, u_ref) samples per step over [t0, t0+n_steps); index-clamped to hold the final reference."""
+    tx = x_refs.shape[0] - 1
+    tu = u_refs.shape[0] - 1
+    idx = (t0 + jnp.arange(n_steps))[:, None] + stride * (1 + jnp.arange(n_points))[None, :]
+    fut_x = x_refs[jnp.minimum(idx, tx)]
+    fut_u = u_refs[jnp.minimum(idx, tu)]
+    return jnp.concatenate([fut_x, fut_u], axis=-1).reshape(n_steps, -1)
 
 
 def rollout_rnn(mjx_model,
@@ -121,7 +134,8 @@ def rollout_rnn(mjx_model,
                 controller_fn: Callable,
                 kp: jnp.ndarray,
                 kd: jnp.ndarray,
-                n_steps: int):
+                n_steps: int,
+                preview=None):
     """Roll out closed-loop control under MJX, RNN-style."""
     nq = mjx_model.nq
     nu = mjx_model.nu
@@ -134,8 +148,9 @@ def rollout_rnn(mjx_model,
         x_curr = jnp.concatenate([d.qpos, d.qvel])
         x_ref = x_refs[t]
         u_ref = u_refs[t]
+        prev_t = None if preview is None else preview[t]
 
-        new_h, v = controller_fn(h, x_curr, u_prev, x_ref, u_ref)
+        new_h, v = controller_fn(h, x_curr, u_prev, x_ref, u_ref, prev_t)
         pd = kp * (x_ref[:nq] - d.qpos) + kd * (x_ref[nq:] - d.qvel)
         u = jnp.clip(u_ref + pd + v, u_lo, u_hi)
 

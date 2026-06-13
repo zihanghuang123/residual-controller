@@ -27,7 +27,8 @@ N_EVAL = 200
 def init_network(cfg, key):
     network = GRUPureController(hidden_sizes=cfg.PURE_RNN["hidden_sizes"], out_dim=cfg.NU)
     nx = 2 * cfg.NQ
-    step_in_dim = nx + cfg.NU + nx + cfg.NU  # [x_curr, u_prev, x_ref, u_ref]
+    n_points = cfg.PURE_RNN.get("lookahead_points", 0)
+    step_in_dim = nx + cfg.NU + nx + cfg.NU + n_points * (nx + cfg.NU)  # [x_curr, u_prev, x_ref, u_ref, preview]
     dummy_h = gru_initial_state(cfg.PURE_RNN["hidden_sizes"])
     params = network.init(key, dummy_h, jnp.zeros(step_in_dim))
     return network, params
@@ -39,6 +40,8 @@ def make_loss_fn(cfg, mjx_model_nominal, nominal_body_mass, network, x_refs, u_r
     hidden_sizes = cfg.PURE_RNN["hidden_sizes"]
     kp = jnp.asarray(cfg.KP)
     kd = jnp.asarray(cfg.KD)
+    n_points = cfg.PURE_RNN.get("lookahead_points", 0)
+    stride = cfg.PURE_RNN.get("lookahead_stride", 1)
 
     def loss_fn(params, theta_key, idx, t0):
         theta = sample_theta(theta_key, cfg.N_LINKS, cfg.DR_RANGES)
@@ -47,13 +50,15 @@ def make_loss_fn(cfg, mjx_model_nominal, nominal_body_mass, network, x_refs, u_r
         x_ref_window = jax.lax.dynamic_slice(x_refs[idx], (t0, 0), (H, 2 * nq))
         u_ref_window = jax.lax.dynamic_slice(u_refs[idx], (t0, 0), (H, cfg.NU))
         x_ref_for_loss = jax.lax.dynamic_slice(x_refs[idx], (t0, 0), (H + 1, 2 * nq))
+        preview = None if n_points == 0 else rollout.build_preview_window(
+            x_refs[idx], u_refs[idx], t0, H, n_points, stride)
 
-        def controller_fn(h, x_curr, u_prev, x_ref, u_ref):
-            return network.apply(params, h, rollout.make_rnn_step_input(x_curr, u_prev, x_ref, u_ref))
+        def controller_fn(h, x_curr, u_prev, x_ref, u_ref, prev):
+            return network.apply(params, h, rollout.make_rnn_step_input(x_curr, u_prev, x_ref, u_ref, preview=prev))
 
         xs, _us, vs, x_final = rollout.rollout_rnn(
             mjx_model, x_ref_window[0], x_ref_window, u_ref_window,
-            gru_initial_state(hidden_sizes), controller_fn, kp, kd, H)
+            gru_initial_state(hidden_sizes), controller_fn, kp, kd, H, preview=preview)
         xs_full = jnp.concatenate([xs, x_final[None]], axis=0)
 
         return losses.tracking_loss(xs_full, x_ref_for_loss, nq) + cfg.PURE_RNN["alpha_reg"] * losses.reg_loss(vs)

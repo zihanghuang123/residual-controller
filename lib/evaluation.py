@@ -190,15 +190,15 @@ def make_eval_callback(cfg, make_controllers, target_name, w,
 # --- RNN (GRU) residual eval: rollout_rnn, no history window ---
 
 def rnn_controller_apply(network):
-    """controller_apply(params, h, x_curr, u_prev, x_ref, u_ref) -> (h, v) for rollout_rnn."""
-    def apply(params, h, x_curr, u_prev, x_ref, u_ref):
-        return network.apply(params, h, rollout.make_rnn_step_input(x_curr, u_prev, x_ref, u_ref))
+    """controller_apply(params, h, x_curr, u_prev, x_ref, u_ref, preview) -> (h, v) for rollout_rnn."""
+    def apply(params, h, x_curr, u_prev, x_ref, u_ref, preview):
+        return network.apply(params, h, rollout.make_rnn_step_input(x_curr, u_prev, x_ref, u_ref, preview=preview))
     return apply
 
 
 def pd_controller_apply(nu):
     """PD baseline: v=0, hidden state passed through unchanged."""
-    def apply(params, h, x_curr, u_prev, x_ref, u_ref):
+    def apply(params, h, x_curr, u_prev, x_ref, u_ref, preview):
         return h, jnp.zeros(nu)
     return apply
 
@@ -209,18 +209,22 @@ def make_rnn_eval_fn(cfg, mjx_model_nominal, nominal_body_mass, controller_apply
     nq = cfg.NQ
     kp = jnp.asarray(cfg.KP)
     kd = jnp.asarray(cfg.KD)
+    n_points = cfg.PURE_RNN.get("lookahead_points", 0)
+    stride = cfg.PURE_RNN.get("lookahead_stride", 1)
 
     def eval_fn(params, theta_key, idx):
         theta = sample_theta(theta_key, cfg.N_LINKS, cfg.DR_RANGES)
         mjx_model = apply_theta(mjx_model_nominal, theta, nominal_body_mass, cfg.N_LINKS)
         x_ref_full = x_refs[idx, :T]
         u_ref_full = u_refs[idx]
+        preview = None if n_points == 0 else rollout.build_preview_window(
+            x_refs[idx], u_refs[idx], 0, T, n_points, stride)
 
-        def controller_fn(h, x_curr, u_prev, x_ref, u_ref):
-            return controller_apply(params, h, x_curr, u_prev, x_ref, u_ref)
+        def controller_fn(h, x_curr, u_prev, x_ref, u_ref, prev):
+            return controller_apply(params, h, x_curr, u_prev, x_ref, u_ref, prev)
 
         xs, us, vs, x_final = rollout.rollout_rnn(
-            mjx_model, x_ref_full[0], x_ref_full, u_ref_full, h0, controller_fn, kp, kd, T)
+            mjx_model, x_ref_full[0], x_ref_full, u_ref_full, h0, controller_fn, kp, kd, T, preview=preview)
         return (*_rollout_metrics(xs, vs, x_final, x_refs[idx], nq), _clamp_fraction(us, mjx_model))
 
     return eval_fn
