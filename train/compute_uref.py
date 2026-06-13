@@ -54,7 +54,8 @@ def main() -> None:
     u_lim = np.where(mj_model.actuator_ctrllimited.astype(bool), mj_model.actuator_ctrlrange[:, 1], np.inf)
     u_abs = np.abs(u_refs[conv])
     print(f"per-joint max |u_ref|: {u_abs.max(axis=(0, 1)).round(1)} (ctrl limit {u_lim})")
-    print(f"steps over limit: {100.0 * (u_abs > u_lim).mean():.2f}%")
+    print(f"per-joint % entries over limit: {(100.0 * (u_abs > u_lim).mean(axis=(0, 1))).round(2)}")
+    print(f"% steps with any joint over: {100.0 * (u_abs > u_lim).any(axis=-1).mean():.2f}%")
 
 
 if __name__ == "__main__":

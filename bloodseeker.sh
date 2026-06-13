@@ -8,23 +8,31 @@ set -uo pipefail
 mkdir -p logs
 
 GPU0=(
+    "mkdir -p outputs/kinova/h1 | kinova_h1"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h1/trajectories.npz | kinova_h1"
+    "python train/train_pure_rnn.py --config plants/kinova/h1.py | kinova_h1"
+
+    "mkdir -p outputs/kinova/h50 | kinova_h50"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h50/trajectories.npz | kinova_h50"
+    "python train/train_pure_rnn.py --config plants/kinova/h50.py | kinova_h50"
+
     "mkdir -p outputs/kinova/h300 | kinova_h300"
     "cp outputs/kinova/config/trajectories.npz outputs/kinova/h300/trajectories.npz | kinova_h300"
     "python train/train_pure_rnn.py --config plants/kinova/h300.py | kinova_h300"
-
-    "mkdir -p outputs/kinova/h1800 | kinova_h1800"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h1800/trajectories.npz | kinova_h1800"
-    "python train/train_pure_rnn.py --config plants/kinova/h1800.py | kinova_h1800"
 )
 
 GPU1=(
-    "mkdir -p outputs/kinova/h600 | kinova_h600"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h600/trajectories.npz | kinova_h600"
-    "python train/train_pure_rnn.py --config plants/kinova/h600.py | kinova_h600"
+    "mkdir -p outputs/kinova/h10 | kinova_h10"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h10/trajectories.npz | kinova_h10"
+    "python train/train_pure_rnn.py --config plants/kinova/h10.py | kinova_h10"
 
-    "mkdir -p outputs/kinova/h1500 | kinova_h1500"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h1500/trajectories.npz | kinova_h1500"
-    "python train/train_pure_rnn.py --config plants/kinova/h1500.py | kinova_h1500"
+    "mkdir -p outputs/kinova/h100 | kinova_h100"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h100/trajectories.npz | kinova_h100"
+    "python train/train_pure_rnn.py --config plants/kinova/h100.py | kinova_h100"
+
+    "mkdir -p outputs/kinova/h200 | kinova_h200"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h200/trajectories.npz | kinova_h200"
+    "python train/train_pure_rnn.py --config plants/kinova/h200.py | kinova_h200"
 )
 
 trim() { local s="$*"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
