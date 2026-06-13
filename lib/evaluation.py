@@ -26,6 +26,14 @@ def _rollout_metrics(xs, vs, x_final, x_ref_full, nq):
             jnp.sqrt(jnp.mean(jnp.sum(vs ** 2, axis=-1))))
 
 
+def _clamp_fraction(us, mjx_model):
+    """Per-joint fraction of rollout steps with applied torque at a finite ctrl limit."""
+    u_lo, u_hi = rollout._ctrl_limits(mjx_model)
+    tol = 1e-5
+    at = (us >= u_hi - tol) | (us <= u_lo + tol)
+    return jnp.mean(at.astype(jnp.float32), axis=0)
+
+
 def _update_best(metric, state, params, path):
     """Save params to path when metric beats state['best']; returns True if it was a new best."""
     if metric >= state["best"]:
@@ -57,24 +65,26 @@ def make_eval_fn(cfg, mjx_model_nominal, nominal_body_mass, x_refs, u_refs, w, m
 
         controller_fn = make_controller_fn(theta)
 
-        xs, _us, vs, x_final = rollout.rollout(
+        xs, us, vs, x_final = rollout.rollout(
             mjx_model, x_init, x_ref_full, u_ref_full,
             x_hist0, u_hist0, x_ref_hist0, u_ref_hist0, controller_fn, kp, kd, T)
-        return _rollout_metrics(xs, vs, x_final, x_refs[idx], nq)
+        return (*_rollout_metrics(xs, vs, x_final, x_refs[idx], nq), _clamp_fraction(us, mjx_model))
 
     return eval_fn
 
 
-def summarize(endpoint, tracking, vrms, name, width=10):
-    """One-row eval summary; tracking reported as RMS to match endpoint units."""
+def summarize(endpoint, tracking, vrms, clamp, name, width=10):
+    """One-row eval summary; tracking reported as RMS. clamp: (n_plants, nq) per-joint hit fractions."""
     ep = np.asarray(endpoint)
     rms_track = np.sqrt(np.asarray(tracking))
     vr = np.asarray(vrms)
+    cl = np.asarray(clamp)
     print(f"  {name:{width}s} "
           f" endpoint: mean={ep.mean():.4f}  med={np.median(ep):.4f}  "
           f"p90={np.percentile(ep, 90):.4f}  max={ep.max():.4f}"
           f"   tracking(rms): mean={rms_track.mean():.4f}  med={np.median(rms_track):.4f}"
-          f"   |v|rms: mean={vr.mean():.3f}")
+          f"   |v|rms: mean={vr.mean():.3f}"
+          f"   clamp-hit: mean={cl.mean():.3f} per-joint={np.round(cl.mean(axis=0), 2)}")
 
 
 def evaluate_residual_controllers(
@@ -91,19 +101,20 @@ def evaluate_residual_controllers(
         eval_fn = make_eval_fn(
             cfg, mjx_model_nominal, nominal_body_mass, x_refs, u_refs, w, make_controller_fn)
         batched_eval = jax.jit(jax.vmap(eval_fn, in_axes=(0, 0)))
-        endpoints, trackings, vrmss = batched_eval(theta_keys, idxs)
-        results[name] = (np.asarray(endpoints), np.asarray(trackings), np.asarray(vrmss))
-        summarize(endpoints, trackings, vrmss, name, width=name_width)
+        endpoints, trackings, vrmss, clamps = batched_eval(theta_keys, idxs)
+        results[name] = (np.asarray(endpoints), np.asarray(trackings), np.asarray(vrmss), np.asarray(clamps))
+        summarize(endpoints, trackings, vrmss, clamps, name, width=name_width)
     return results
 
 
 def save_metrics(results, metrics_path):
     """Save {name: (endpoint, tracking, vrms)} to npz with conventional key names (endpoint_<name>, tracking_<name>, vrms_<name>)."""
     data = {}
-    for name, (ep, tr, vr) in results.items():
+    for name, (ep, tr, vr, cl) in results.items():
         data[f"endpoint_{name}"] = ep
         data[f"tracking_{name}"] = tr
         data[f"vrms_{name}"] = vr
+        data[f"clamp_{name}"] = cl
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez(metrics_path, **data)
     print(f"saved {metrics_path}")
@@ -208,9 +219,9 @@ def make_rnn_eval_fn(cfg, mjx_model_nominal, nominal_body_mass, controller_apply
         def controller_fn(h, x_curr, u_prev, x_ref, u_ref):
             return controller_apply(params, h, x_curr, u_prev, x_ref, u_ref)
 
-        xs, _us, vs, x_final = rollout.rollout_rnn(
+        xs, us, vs, x_final = rollout.rollout_rnn(
             mjx_model, x_ref_full[0], x_ref_full, u_ref_full, h0, controller_fn, kp, kd, T)
-        return _rollout_metrics(xs, vs, x_final, x_refs[idx], nq)
+        return (*_rollout_metrics(xs, vs, x_final, x_refs[idx], nq), _clamp_fraction(us, mjx_model))
 
     return eval_fn
 
@@ -222,9 +233,9 @@ def evaluate_rnn_controllers(cfg, controllers, x_refs, u_refs, mjx_model_nominal
     results = {}
     for name, (controller_apply, params, h0) in controllers.items():
         eval_fn = make_rnn_eval_fn(cfg, mjx_model_nominal, nominal_body_mass, controller_apply, h0, x_refs, u_refs)
-        ep, tr, vr = jax.jit(jax.vmap(eval_fn, in_axes=(None, 0, 0)))(params, theta_keys, idxs)
-        results[name] = (np.asarray(ep), np.asarray(tr), np.asarray(vr))
-        summarize(ep, tr, vr, name, width=name_width)
+        ep, tr, vr, cl = jax.jit(jax.vmap(eval_fn, in_axes=(None, 0, 0)))(params, theta_keys, idxs)
+        results[name] = (np.asarray(ep), np.asarray(tr), np.asarray(vr), np.asarray(cl))
+        summarize(ep, tr, vr, cl, name, width=name_width)
     return results
 
 
@@ -243,18 +254,18 @@ def make_rnn_eval_callback(cfg, network, h0, x_refs, u_refs, mjx_model_nominal, 
 
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with open(csv_path, "w") as f:
-        f.write("iter,endpoint_pd,endpoint_rnn,tracking_rms_rnn,vrms_rnn,is_best\n")
+        f.write("iter,endpoint_pd,endpoint_rnn,tracking_rms_rnn,vrms_rnn,clamp_rnn,is_best\n")
     state = {"best": float("inf")}
 
     def callback(params, iteration, opt_state=None):
-        ep, tr, vr = rnn_eval(params, theta_keys, idxs)
-        ep_m, tr_rms, vr_m = float(ep.mean()), float(np.sqrt(tr).mean()), float(vr.mean())
+        ep, tr, vr, cl = rnn_eval(params, theta_keys, idxs)
+        ep_m, tr_rms, vr_m, cl_m = float(ep.mean()), float(np.sqrt(tr).mean()), float(vr.mean()), float(cl.mean())
         is_best = _update_best(ep_m, state, params, best_params_path)
         if is_best and opt_state is not None and best_opt_state_path is not None:
             with open(best_opt_state_path, "wb") as f:
                 pickle.dump(opt_state, f)
         with open(csv_path, "a") as f:
-            f.write(f"{iteration},{ep_pd:.6f},{ep_m:.6f},{tr_rms:.6f},{vr_m:.6f},{int(is_best)}\n")
+            f.write(f"{iteration},{ep_pd:.6f},{ep_m:.6f},{tr_rms:.6f},{vr_m:.6f},{cl_m:.6f},{int(is_best)}\n")
         reduction = 100 * (1 - ep_m / ep_pd) if ep_pd > 0 else float("nan")
         suffix = "  *** BEST ***" if is_best else ""
         print(f"  [eval iter {iteration:5d}] pure_rnn endpoint={ep_m:.4f} vs pd {ep_pd:.4f} "
