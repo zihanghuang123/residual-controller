@@ -7,9 +7,13 @@ set -uo pipefail
 mkdir -p logs
 
 GPU0=(
-    "mkdir -p outputs/kinova/h400 | kinova_h400"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h400/trajectories.npz | kinova_h400"
-    "python train/train_pure_rnn.py --config plants/kinova/h400.py | kinova_h400"
+    "mkdir -p outputs/kinova/la450p10 | kinova_la450p10"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/la450p10/trajectories.npz | kinova_la450p10"
+    "python train/train_pure_rnn.py --config plants/kinova/la450p10.py | kinova_la450p10"
+
+    "mkdir -p outputs/kinova/la450p20 | kinova_la450p20"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/la450p20/trajectories.npz | kinova_la450p20"
+    "python train/train_pure_rnn.py --config plants/kinova/la450p20.py | kinova_la450p20"
 )
 
 trim() { local s="$*"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }

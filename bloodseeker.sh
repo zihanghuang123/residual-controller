@@ -8,31 +8,23 @@ set -uo pipefail
 mkdir -p logs
 
 GPU0=(
-    "mkdir -p outputs/kinova/h1 | kinova_h1"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h1/trajectories.npz | kinova_h1"
-    "python train/train_pure_rnn.py --config plants/kinova/h1.py | kinova_h1"
+    "mkdir -p outputs/kinova/la300p10 | kinova_la300p10"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/la300p10/trajectories.npz | kinova_la300p10"
+    "python train/train_pure_rnn.py --config plants/kinova/la300p10.py | kinova_la300p10"
 
-    "mkdir -p outputs/kinova/h50 | kinova_h50"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h50/trajectories.npz | kinova_h50"
-    "python train/train_pure_rnn.py --config plants/kinova/h50.py | kinova_h50"
-
-    "mkdir -p outputs/kinova/h300 | kinova_h300"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h300/trajectories.npz | kinova_h300"
-    "python train/train_pure_rnn.py --config plants/kinova/h300.py | kinova_h300"
+    "mkdir -p outputs/kinova/la600p10 | kinova_la600p10"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/la600p10/trajectories.npz | kinova_la600p10"
+    "python train/train_pure_rnn.py --config plants/kinova/la600p10.py | kinova_la600p10"
 )
 
 GPU1=(
-    "mkdir -p outputs/kinova/h10 | kinova_h10"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h10/trajectories.npz | kinova_h10"
-    "python train/train_pure_rnn.py --config plants/kinova/h10.py | kinova_h10"
+    "mkdir -p outputs/kinova/la300p20 | kinova_la300p20"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/la300p20/trajectories.npz | kinova_la300p20"
+    "python train/train_pure_rnn.py --config plants/kinova/la300p20.py | kinova_la300p20"
 
-    "mkdir -p outputs/kinova/h100 | kinova_h100"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h100/trajectories.npz | kinova_h100"
-    "python train/train_pure_rnn.py --config plants/kinova/h100.py | kinova_h100"
-
-    "mkdir -p outputs/kinova/h200 | kinova_h200"
-    "cp outputs/kinova/config/trajectories.npz outputs/kinova/h200/trajectories.npz | kinova_h200"
-    "python train/train_pure_rnn.py --config plants/kinova/h200.py | kinova_h200"
+    "mkdir -p outputs/kinova/la600p20 | kinova_la600p20"
+    "cp outputs/kinova/config/trajectories.npz outputs/kinova/la600p20/trajectories.npz | kinova_la600p20"
+    "python train/train_pure_rnn.py --config plants/kinova/la600p20.py | kinova_la600p20"
 )
 
 trim() { local s="$*"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
